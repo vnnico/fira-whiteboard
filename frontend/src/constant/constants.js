@@ -30,3 +30,30 @@ export const CursorPosition = {
   TOP: "TOP",
   BOTTOM: "BOTTOM",
 };
+
+export const SHORTCUTS = [
+  {
+    keys: ["v"],
+    action: "TOOL_POINTER",
+    ctrl: false,
+    preventDefault: true,
+  },
+  {
+    keys: ["h"],
+    action: "TOOL_HAND",
+    ctrl: false,
+    preventDefault: true,
+  },
+  {
+    keys: ["=", "+"],
+    action: "ZOOM_IN",
+    ctrl: true,
+    preventDefault: true,
+  },
+  {
+    keys: ["-"],
+    action: "ZOOM_OUT",
+    ctrl: true,
+    preventDefault: true,
+  },
+];

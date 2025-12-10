@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { WhiteboardShell } from "./WhiteboardShell";
 import {
   FiChevronLeft,
@@ -23,6 +23,11 @@ import { getCursorForPosition } from "../../utils/getCursorForPosition";
 import CursorOverlay from "./CursorOverlay";
 import { useToast } from "../../hooks/useToast";
 import { useNavigate } from "react-router-dom";
+
+import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+
+const CANVAS_SIZE = 8000;
 
 export default function WhiteboardCanvas({ roomId }) {
   const {
@@ -50,18 +55,37 @@ export default function WhiteboardCanvas({ roomId }) {
   const { showToast } = useToast();
   const navigate = useNavigate();
 
+  // For accessing zoom and pan
+  const transformRef = useRef(null);
   // TEXT mode: simpan ID element TEXT yang sedang "ditulis"
   const [writingElementId, setWritingElementId] = useState(null);
   const textAreaRef = useRef(null);
 
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
+  const [scale, setScale] = useState(1);
 
   const interactionRef = useRef({
     originX: 0,
     originY: 0,
     originalElement: null,
   });
+
+  useEffect(() => {
+    const handleWheel = (e) => {
+      // Jika user menekan Ctrl (atau Meta di Mac) saat scroll
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault(); // disable zoom browser bawaan
+      }
+    };
+
+    // supaya preventDefault bekerja
+    window.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      window.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
 
   useEffect(() => {
     // Fungsi penahan
@@ -113,28 +137,17 @@ export default function WhiteboardCanvas({ roomId }) {
     }
   }, [writingElementId]);
 
-  // Resize canvas terhadap container
   useEffect(() => {
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
+    if (canvas) {
+      canvas.width = CANVAS_SIZE;
+      canvas.height = CANVAS_SIZE;
 
-    const resize = () => {
-      const rect = container.getBoundingClientRect();
-      canvas.width = rect.width;
-      canvas.height = rect.height;
-
+      // Render awal
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawElements(ctx, elements, locks, myUserId);
-    };
-
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [elements, locks, myUserId]);
+    }
+  }, []); // Run once
 
   // Redraw ketika elements / locks berubah
   useEffect(() => {
@@ -146,24 +159,16 @@ export default function WhiteboardCanvas({ roomId }) {
     drawElements(ctx, elements, locks, myUserId);
   }, [elements, locks, myUserId]);
 
-  const handleShareLink = async () => {
-    const url = window.location.href;
-    try {
-      await navigator.clipboard.writeText(url);
-      showToast(
-        "Link copied to clipboard! Share it with your team.",
-        "success"
-      );
-    } catch (err) {
-      showToast("Failed to copy link", "error");
-    }
-  };
-
   const getRelativePos = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = canvasRef.current.getBoundingClientRect();
+
+    // buat Ambil scale, default ke 1 jika error/null/0
+    let currentScale = transformRef.current?.instance.transformState.scale || 1;
+    if (currentScale <= 0 || isNaN(currentScale)) currentScale = 1;
+
     return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: (e.clientX - rect.left) / currentScale,
+      y: (e.clientY - rect.top) / currentScale,
     };
   };
 
@@ -231,7 +236,6 @@ export default function WhiteboardCanvas({ roomId }) {
     interactionRef.current.originX = x;
     interactionRef.current.originY = y;
 
-    // === TEXT TOOL ===
     if (currentTool === ToolTypes.TEXT) {
       // Kalau sedang menulis text lain, jangan mulai yang baru
       if (writingElementId) return;
@@ -261,6 +265,7 @@ export default function WhiteboardCanvas({ roomId }) {
       currentTool === ToolTypes.LINE ||
       currentTool === ToolTypes.PENCIL
     ) {
+      e.stopPropagation();
       const id = crypto.randomUUID();
       const element = createElement({
         id,
@@ -291,6 +296,7 @@ export default function WhiteboardCanvas({ roomId }) {
         setAction(ActionTypes.NONE);
         return;
       }
+      e.stopPropagation(); // agar wrapper tidak berpikir mau drag canvas
 
       // locked oleh user lain
       if (locks[element.id] && locks[element.id] !== myUserId) {
@@ -320,7 +326,10 @@ export default function WhiteboardCanvas({ roomId }) {
       return;
     }
 
-    // HAND (pan canvas) belum diimplementasi
+    // HAND (pan canvas) b
+    // if (action === ActionTypes.NONE && currentTool === ToolTypes.HAND) {
+    //   canvas.style.cursor = "grabbing";
+    // }
   };
 
   // ===== MOUSE MOVE =====
@@ -338,6 +347,9 @@ export default function WhiteboardCanvas({ roomId }) {
         canvas.style.cursor = getCursorForPosition(position);
       } else if (currentTool === ToolTypes.TEXT) {
         canvas.style.cursor = "text";
+      } else if (currentTool === ToolTypes.HAND) {
+        canvas.style.cursor = "grab";
+        // }
       } else {
         canvas.style.cursor = "crosshair";
       }
@@ -483,161 +495,321 @@ export default function WhiteboardCanvas({ roomId }) {
     ? elements.find((el) => el.id === writingElementId)
     : null;
 
+  // Shortcut
+  const handleShortcutAction = useCallback(
+    (action) => {
+      switch (action) {
+        case "ZOOM_IN":
+          transformRef.current?.zoomIn();
+          break;
+
+        case "ZOOM_OUT":
+          transformRef.current?.zoomOut();
+          break;
+
+        case "TOOL_POINTER":
+          setCurrentTool(ToolTypes.POINTER);
+          setAction(ActionTypes.NONE);
+          break;
+
+        case "TOOL_HAND":
+          setCurrentTool(ToolTypes.HAND);
+          setAction(ActionTypes.NONE);
+          break;
+
+        default:
+          break;
+      }
+    },
+    [transformRef, setCurrentTool, setAction]
+  );
+  useKeyboardShortcuts(handleShortcutAction);
+
+  const handleResetZoom = () => {
+    if (transformRef.current) {
+      // centerView(scale, duration, animationType)
+      // Ini akan mereset zoom ke 1 (100%) DAN memusatkan view ke tengah canvas
+      transformRef.current.centerView(1, 300, "easeOut");
+    }
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheel = (e) => {
+      if (!transformRef.current) return;
+      if (e.ctrlKey || e.metaKey) return; // Biarkan Ctrl+Scroll untuk Zoom
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const { instance } = transformRef.current;
+      const { scale, positionX, positionY } = instance.transformState;
+      const wrapperRect = instance.wrapperComponent.getBoundingClientRect();
+
+      // Tentukan Delta (Geser seberapa jauh)
+      const scrollSpeed = 1;
+      let deltaX = e.deltaX;
+      let deltaY = e.deltaY;
+
+      // Support Shift + Scroll untuk Horizontal Pan
+      if (e.shiftKey && deltaY !== 0 && deltaX === 0) {
+        deltaX = deltaY;
+        deltaY = 0;
+      }
+
+      //  Hitung Calon Posisi Baru
+      let newX = positionX - deltaX * scrollSpeed;
+      let newY = positionY - deltaY * scrollSpeed;
+
+      // Clamping manual
+      // Ukuran Wrapper (Jendela Tampilan)
+      const wrapperWidth = wrapperRect.width;
+      const wrapperHeight = wrapperRect.height;
+
+      // Ukuran Canvas saat ini (Original * Scale)
+      const contentWidth = CANVAS_SIZE * scale;
+      const contentHeight = CANVAS_SIZE * scale;
+
+      // A. Hitung Batas Bawah (Minimum X/Y)
+      // Rumus: Jendela - Konten.
+      // Jika konten lebih besar dari jendela, hasilnya minus (artinya batas geser kiri/atas).
+      // Jika konten lebih kecil (zoom out jauh), hasilnya positif.
+      const minX = wrapperWidth - contentWidth;
+      const minY = wrapperHeight - contentHeight;
+
+      // B. Hitung Batas Atas (Maksimum X/Y)
+      // Biasanya 0. Tapi jika konten lebih kecil dari jendela, kita mau dia mentok di 0 (kiri)
+      // atau logika lain. Default library biasanya max 0.
+      const maxX = 0;
+      const maxY = 0;
+
+      // C. Terapkan Pagar
+      // Jika Konten > Wrapper (Normal Zoom):
+      //    newX tidak boleh > 0 (agar gak bolong kiri)
+      //    newX tidak boleh < minX (agar gak bolong kanan)
+
+      // Safety Check: Hanya clamp jika konten memang lebih besar dari wrapper
+      if (contentWidth > wrapperWidth) {
+        newX = Math.min(maxX, Math.max(minX, newX));
+      } else {
+        // Jika konten kekecilan (Zoom Out ekstrem), paksa tengah atau kiri (0)
+        // Pilih 0 biar konsisten dengan limitToBounds library
+        newX = (wrapperWidth - contentWidth) / 2; // Opsi A: Center
+        // newX = 0; // Opsi B: Pojok Kiri
+      }
+
+      if (contentHeight > wrapperHeight) {
+        newY = Math.min(maxY, Math.max(minY, newY));
+      } else {
+        newY = (wrapperHeight - contentHeight) / 2; // Center Vertikal
+      }
+
+      transformRef.current.setTransform(newX, newY, scale, 0);
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+    };
+  }, [CANVAS_SIZE]);
   return (
-    <WhiteboardShell
-      title="Untitled"
-      roomId={roomId}
-      handleShareLink={handleShareLink}
+    <div
+      ref={containerRef}
+      className="relative h-full w-full bg-slate-50 overflow-hidden"
     >
-      <div ref={containerRef} className="relative h-full w-full">
-        {/* Canvas utama */}
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 h-full w-full bg-slate-50"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-        />
-
-        {/* TEXTAREA overlay (ala reference) */}
-        {writingElement && (
-          <textarea
-            ref={textAreaRef}
-            onBlur={handleTextareaBlur}
-            className="fixed-textarea" // Bisa pakai class CSS atau inline style di bawah
+      <TransformWrapper
+        ref={transformRef}
+        initialScale={1}
+        minScale={0.1}
+        maxScale={10}
+        centerOnInit={true} // otomatis tengah
+        limitToBounds={true} // geser infinitely
+        //  Matikan Panning kalau user sedang TIDAK pegang Hand Tool
+        // Agar user bisa draw (Pencil) tanpa canvasnya ikut geser
+        panning={{
+          disabled: currentTool !== ToolTypes.HAND,
+          velocityDisabled: false,
+          velocityAnimation: {
+            sensitivity: 0.5, // Default biasanya 1, Turunkan biar gak gampang "terlempar" jauh.
+            animationTime: 250, // Default ribuan ms. Set pendek (200-300ms) biar cepat berhenti.
+            animationType: "easeOutQuart", // Tipe rem yang halus tapi tegas di akhir.
+          },
+        }}
+        wheel={{
+          step: 0.05,
+          smoothStep: 0.002,
+          activationKeys: ["Control", "Meta"],
+        }} // Zoom pakai scroll mouse
+        doubleClick={{ disabled: true }}
+        onTransformed={(instance) => {
+          setScale(instance.state.scale);
+        }}
+      >
+        <TransformComponent
+          wrapperStyle={{
+            width: "100%",
+            height: "100%",
+            overflow: "hidden",
+            backgroundColor: "white",
+          }}
+        >
+          <div
             style={{
-              position: "absolute",
-              top: writingElement.y1, // Hapus offset -3 biar presisi dulu
-              left: writingElement.x1,
-              font: "24px sans-serif",
-              lineHeight: "30px", // PENTING: Harus match dengan drawElement
-              margin: 0,
-              padding: 0,
-              border: 0,
-              outline: 0,
-              resize: "none",
-              overflow: "hidden",
-              whiteSpace: "pre", // Agar enter/spasi terbaca
-              background: "transparent",
-              zIndex: 30,
-              minWidth: "50px",
-              color: "#111827",
+              width: CANVAS_SIZE,
+              height: CANVAS_SIZE,
+              backgroundImage: "radial-gradient(#ddd 1px, transparent 1px)",
+              backgroundSize: "20px 20px",
             }}
-          />
-        )}
+            className="relative bg-slate-50"
+            onMouseEnter={() => {
+              if (currentTool === ToolTypes.HAND)
+                document.body.style.cursor = "grab";
+            }}
+          >
+            <canvas
+              ref={canvasRef}
+              width={CANVAS_SIZE}
+              height={CANVAS_SIZE}
+              className="block"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+            />
 
-        {/* Tombol collapse toolbar */}
-        <button
-          type="button"
-          onClick={() => setCollapsed((prev) => !prev)}
-          className="absolute left-1 top-1/2 z-20 -translate-y-1/2 rounded-full bg-slate-900 px-[5px] py-[3px] text-xs text-slate-50 shadow"
-        >
-          {collapsed ? <FiChevronRight /> : <FiChevronLeft />}
-        </button>
+            {writingElement && (
+              <textarea
+                ref={textAreaRef}
+                onBlur={handleTextareaBlur}
+                style={{
+                  position: "absolute",
+                  top: writingElement.y1,
+                  left: writingElement.x1,
+                  font: "24px sans-serif",
+                  lineHeight: "30px",
+                  margin: 0,
+                  padding: 0,
+                  border: 0,
+                  outline: 0,
+                  resize: "none",
+                  overflow: "hidden",
+                  whiteSpace: "pre",
+                  background: "transparent",
+                  zIndex: 30,
+                  minWidth: "50px",
+                  color: "#111827",
+                }}
+              />
+            )}
+            <CursorOverlay cursors={cursors} />
+          </div>
+        </TransformComponent>
+      </TransformWrapper>
 
-        {/* Toolbar kiri */}
-        <div
-          className={`absolute left-4 top-1/2 z-10 -translate-y-1/2 transition-all duration-200 ${
-            collapsed
-              ? "-translate-x-16 opacity-0 pointer-events-none"
-              : "translate-x-0 opacity-100"
-          }`}
-        >
-          <div className="ms-2 flex flex-col items-center gap-4">
-            {/* Clock */}
-            <button className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-200 text-sm text-slate-700 shadow">
-              ⏱
+      <button
+        onClick={() => setCollapsed((prev) => !prev)}
+        className="absolute left-1 top-1/2 z-20 -translate-y-1/2 rounded-full bg-slate-900 px-[5px] py-[3px] text-xs text-slate-50 shadow"
+      >
+        {collapsed ? <FiChevronRight /> : <FiChevronLeft />}
+      </button>
+
+      <div
+        className={`absolute left-4 top-1/2 z-10 -translate-y-1/2 transition-all duration-200 ${
+          collapsed
+            ? "-translate-x-16 opacity-0 pointer-events-none"
+            : "translate-x-0 opacity-100"
+        }`}
+      >
+        <div className="ms-2 flex flex-col items-center gap-4">
+          <button className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-200 text-sm text-slate-700 shadow">
+            ⏱
+          </button>
+          <div className="flex flex-col gap-2 rounded-2xl bg-slate-200 px-1 py-2 shadow">
+            <ToolButton
+              active={currentTool === ToolTypes.POINTER}
+              onClick={() => {
+                setCurrentTool(ToolTypes.POINTER);
+                setAction(ActionTypes.NONE);
+              }}
+            >
+              ▲
+            </ToolButton>
+            <ToolButton
+              active={currentTool === ToolTypes.HAND}
+              onClick={() => {
+                setCurrentTool(ToolTypes.HAND);
+                setAction(ActionTypes.NONE);
+              }}
+            >
+              ✋
+            </ToolButton>
+            <ToolButton
+              active={currentTool === ToolTypes.PENCIL}
+              onClick={() => setCurrentTool(ToolTypes.PENCIL)}
+            >
+              ✏️
+            </ToolButton>
+            <ToolButton
+              active={currentTool === ToolTypes.RECTANGLE}
+              onClick={() => setCurrentTool(ToolTypes.RECTANGLE)}
+            >
+              ▢
+            </ToolButton>
+            <ToolButton
+              active={currentTool === ToolTypes.LINE}
+              onClick={() => setCurrentTool(ToolTypes.LINE)}
+            >
+              ／
+            </ToolButton>
+            <ToolButton
+              active={false}
+              onClick={() => {
+                setWritingElementId(null);
+                clearBoard(true);
+              }}
+            >
+              ⌫
+            </ToolButton>
+            <ToolButton
+              active={currentTool === ToolTypes.TEXT}
+              onClick={() => setCurrentTool(ToolTypes.TEXT)}
+            >
+              T
+            </ToolButton>
+          </div>
+          <div className="flex flex-col gap-2 rounded-2xl bg-slate-200 px-1 py-2 shadow">
+            <button
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-800"
+              onClick={(e) => {
+                transformRef.current?.zoomIn();
+                e.currentTarget.blur();
+              }}
+            >
+              +
             </button>
-
-            {/* Tools */}
-            <div className="flex flex-col gap-2 rounded-2xl bg-slate-200 px-1 py-2 shadow">
-              <ToolButton
-                active={currentTool === ToolTypes.POINTER}
-                onClick={() => {
-                  setCurrentTool(ToolTypes.POINTER);
-                  setAction(ActionTypes.NONE);
-                }}
-              >
-                ▲
-              </ToolButton>
-
-              <ToolButton
-                active={currentTool === ToolTypes.HAND}
-                onClick={() => {
-                  setCurrentTool(ToolTypes.HAND);
-                  setAction(ActionTypes.NONE);
-                }}
-              >
-                ✋
-              </ToolButton>
-
-              <ToolButton
-                active={currentTool === ToolTypes.PENCIL}
-                onClick={() => setCurrentTool(ToolTypes.PENCIL)}
-              >
-                ✏️
-              </ToolButton>
-
-              <ToolButton
-                active={currentTool === ToolTypes.RECTANGLE}
-                onClick={() => setCurrentTool(ToolTypes.RECTANGLE)}
-              >
-                ▢
-              </ToolButton>
-
-              <ToolButton
-                active={currentTool === ToolTypes.LINE}
-                onClick={() => setCurrentTool(ToolTypes.LINE)}
-              >
-                ／
-              </ToolButton>
-
-              {/* Eraser = clear board */}
-              <ToolButton
-                active={false}
-                onClick={() => {
-                  setWritingElementId(null);
-                  clearBoard(true);
-                }}
-              >
-                ⌫
-              </ToolButton>
-
-              <ToolButton
-                active={currentTool === ToolTypes.TEXT}
-                onClick={() => setCurrentTool(ToolTypes.TEXT)}
-              >
-                T
-              </ToolButton>
-            </div>
-
-            {/* Zoom */}
-            <div className="flex flex-col gap-2 rounded-2xl bg-slate-200 px-1 py-2 shadow">
-              <button className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-800">
-                +
-              </button>
-              <button className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-800">
-                –
-              </button>
-            </div>
+            <button
+              onClick={handleResetZoom}
+              className="w-12 text-xs font-semibold text-slate-700 tabular-nums text-center hover:text-blue-600 outline-none focus:outline-none focus:ring-0"
+              title="Reset Zoom"
+            >
+              {Math.max(10, Math.round(scale * 100))}%{" "}
+            </button>
+            <button
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-800"
+              onClick={(e) => {
+                transformRef.current?.zoomOut();
+                e.currentTarget.blur();
+              }}
+            >
+              –
+            </button>
           </div>
         </div>
-
-        {/* Voice & Chat buttons */}
-        <div className="absolute bottom-6 right-6 z-10 flex items-center gap-2 rounded-2xl bg-slate-200/90 px-3 py-2 shadow">
-          <button className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-900 text-slate-50">
-            <FiMic />
-          </button>
-          <button className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-900 text-slate-50">
-            <FiMessageSquare />
-          </button>
-        </div>
-
-        {/* Cursor user lain */}
-        <CursorOverlay cursors={cursors} />
       </div>
-    </WhiteboardShell>
+    </div>
   );
 }
 
@@ -645,22 +817,17 @@ function ToolButton({ active, onClick, children }) {
   return (
     <button
       type="button"
-      onClick={onClick}
-      className={`
-        flex h-10 w-10 items-center justify-center rounded-xl text-sm
-        border border-transparent
-        transition-all duration-150
-  
-        ${active ? "bg-slate-900 text-slate-50" : "bg-slate-100 text-slate-700"}
-
-        ring-0 ring-offset-2 ring-offset-slate-200
-
-        hover:ring-2
-
-        ${active ? "hover:ring-slate-900/80" : "hover:ring-slate-400/70"}
-
-        hover:-translate-y-[1px] active:translate-y-0
-      `}
+      onClick={(e) => {
+        onClick();
+        e.currentTarget.blur(); // lepas focus setelah klik biar ga ad border sisa
+      }}
+      className={`flex h-10 w-10 items-center justify-center rounded-xl text-sm transition-all duration-150
+        outline-none focus:outline-none focus:ring-0
+        ${
+          active
+            ? "bg-slate-900 text-slate-50 shadow-md transform scale-105"
+            : "bg-slate-100 text-slate-700 hover:bg-white hover:shadow-sm"
+        }`}
     >
       {children}
     </button>

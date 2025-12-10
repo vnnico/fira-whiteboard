@@ -13,7 +13,7 @@ export function useWhiteboard(roomId) {
   const [cursors, setCursors] = useState([]); // [{userId,x,y}]
 
   // Data state in mid whiteboard
-  const [title, setTitle] = useState();
+  const [title, setTitle] = useState("Untitled");
   const myUserId = user?.id || "anon";
 
   // ------ socket setup ------
