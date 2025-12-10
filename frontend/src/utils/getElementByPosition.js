@@ -123,12 +123,18 @@ export function getElementAtPosition(elements, x, y) {
     } else if (el.type === ToolTypes.PENCIL) {
       position = positionWithinPencil(x, y, el);
     } else if (el.type === ToolTypes.TEXT) {
-      const approx = {
-        ...el,
-        x2: el.x1 + (el.text?.length || 4) * 8,
-        y2: el.y1 + 20,
-      };
-      position = positionWithinRectangle(x, y, approx);
+      // 1. Pastikan x2/y2 valid (fallback ke x1/y1 jika belum ada)
+      const x2 = el.x2 ?? el.x1;
+      const y2 = el.y2 ?? el.y1;
+
+      // 2. Hitung Bounds dengan Buffer (misal 6px) agar mudah diklik
+      const pad = 6;
+      const inside =
+        x >= el.x1 - pad && x <= x2 + pad && y >= el.y1 - pad && y <= y2 + pad;
+
+      // 3. FORCE RETURN INSIDE. Jangan return corner (TOP_LEFT dsb)
+      // karena logika resize text belum ada, nanti malah macet.
+      position = inside ? CursorPosition.INSIDE : CursorPosition.OUTSIDE;
     }
 
     if (position !== CursorPosition.OUTSIDE) {

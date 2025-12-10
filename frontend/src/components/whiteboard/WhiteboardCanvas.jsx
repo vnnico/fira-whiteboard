@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { WhiteboardShell } from "./WhiteboardShell";
 import {
   FiChevronLeft,
@@ -21,6 +21,8 @@ import { getResizedCoordinates } from "../../utils/getResizedCoordinates";
 import { updateElement } from "../../utils/updateElement";
 import { getCursorForPosition } from "../../utils/getCursorForPosition";
 import CursorOverlay from "./CursorOverlay";
+import { useToast } from "../../hooks/useToast";
+import { useNavigate } from "react-router-dom";
 
 export default function WhiteboardCanvas({ roomId }) {
   const {
@@ -45,6 +47,9 @@ export default function WhiteboardCanvas({ roomId }) {
     CursorPosition.OUTSIDE
   );
 
+  const { showToast } = useToast();
+  const navigate = useNavigate();
+
   // TEXT mode: simpan ID element TEXT yang sedang "ditulis"
   const [writingElementId, setWritingElementId] = useState(null);
   const textAreaRef = useRef(null);
@@ -57,6 +62,49 @@ export default function WhiteboardCanvas({ roomId }) {
     originY: 0,
     originalElement: null,
   });
+
+  useEffect(() => {
+    // Fungsi penahan
+    const handleBeforeUnload = (e) => {
+      // Logic: Hanya aktifkan jika sedang ada koneksi penting
+      // Contoh nanti: if (isVoiceConnected || hasUnsavedChanges)
+
+      // Untuk sekarang, kita anggap masuk room = sesi penting
+      e.preventDefault();
+      e.returnValue = ""; // Trigger browser default warning: "Changes you made may not be saved."
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    // 2. Prevent Browser Back Button (History Trap)
+    // Push state baru agar tombol back tidak langsung keluar, tapi mentok di sini dulu
+    window.history.pushState(null, document.title, window.location.href);
+
+    const handlePopState = (e) => {
+      // Saat user tekan Back, event ini terpanggil
+      // Munculkan konfirmasi native browser
+      const confirmLeave = window.confirm("Changes you made may not be saved");
+
+      if (confirmLeave) {
+        // Jika user maksa keluar:
+        // Bersihkan listener agar tidak looping
+        window.removeEventListener("popstate", handlePopState);
+        // Mundur beneran (atau ke dashboard)
+        navigate("/");
+      } else {
+        // Jika user batal keluar:
+        // Push state lagi untuk me-reset "jebakan" agar tombol back terkunci lagi
+        window.history.pushState(null, document.title, window.location.href);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [navigate]);
 
   // Auto focus textarea ketika muncul
   useEffect(() => {
@@ -98,6 +146,19 @@ export default function WhiteboardCanvas({ roomId }) {
     drawElements(ctx, elements, locks, myUserId);
   }, [elements, locks, myUserId]);
 
+  const handleShareLink = async () => {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast(
+        "Link copied to clipboard! Share it with your team.",
+        "success"
+      );
+    } catch (err) {
+      showToast("Failed to copy link", "error");
+    }
+  };
+
   const getRelativePos = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     return {
@@ -110,42 +171,51 @@ export default function WhiteboardCanvas({ roomId }) {
   const handleTextareaBlur = (e) => {
     if (!writingElementId) return;
 
-    const value = e.target.value.trim();
+    const value = e.target.value; // Jangan di-trim total, user mungkin mau spasi di akhir
     const id = writingElementId;
     setWritingElementId(null);
 
-    // Jika kosong → hapus placeholder TEXT
-    if (!value) {
+    // Hapus jika kosong total
+    if (!value.trim()) {
       setElements((prev) => prev.filter((el) => el.id !== id));
       return;
     }
 
-    // Update element TEXT yang sudah ada
+    // Update element TEXT
     let finalElement = null;
 
     setElements((prev) =>
       prev.map((el) => {
         if (el.id !== id) return el;
 
-        // Hitung width/height text seperti reference
-        let x2 = el.x2 ?? el.x1;
-        let y2 = el.y2 ?? el.y1;
+        let x2 = el.x1;
+        let y2 = el.y1;
+
         const canvas = canvasRef.current;
         if (canvas) {
           const ctx = canvas.getContext("2d");
-          ctx.font = "24px sans-serif";
-          const textWidth = ctx.measureText(value).width;
-          const textHeight = 24; // mengikuti reference
-          x2 = el.x1 + textWidth;
-          y2 = el.y1 + textHeight;
+          const FONT_SIZE = 24;
+          const LINE_HEIGHT = 30;
+          ctx.font = `${FONT_SIZE}px sans-serif`;
+
+          const lines = value.split("\n");
+
+          // Hitung Max Width
+          let maxWidth = 0;
+          lines.forEach((line) => {
+            const width = ctx.measureText(line).width;
+            if (width > maxWidth) maxWidth = width;
+          });
+
+          // Hitung Total Height
+          const totalHeight = lines.length * LINE_HEIGHT;
+
+          // Simpan bounding box yang akurat
+          x2 = el.x1 + maxWidth;
+          y2 = el.y1 + totalHeight;
         }
 
-        finalElement = {
-          ...el,
-          text: value,
-          x2,
-          y2,
-        };
+        // ... return finalElement
         return finalElement;
       })
     );
@@ -371,22 +441,26 @@ export default function WhiteboardCanvas({ roomId }) {
       return;
     }
 
-    let finalElement = null;
+    // 1. Cari index elemen yang sedang diedit dari state 'elements' saat ini
+    const index = elements.findIndex((el) => el.id === selectedId);
+    if (index === -1) return;
 
+    // 2. Lakukan kalkulasi finalisasi (Normalisasi koordinat)
+    // Kita ambil elemen mentah, lalu olah
+    const rawElement = elements[index];
+    const finalElement = adjustElementCoordinates(rawElement);
+
+    // 3. Update State Lokal dengan data yang SUDAH jadi
     setElements((prev) => {
-      const { elements: updated, element } = updateElement(
-        prev,
-        selectedId,
-        (el) => adjustElementCoordinates(el)
-      );
-      finalElement = element;
+      const updated = [...prev];
+      updated[index] = finalElement; // Timpa dengan data yang sudah dihitung
       return updated;
     });
 
-    if (finalElement) {
-      sendFinalElement(finalElement);
-    }
+    // 4. Kirim ke Socket (Sekarang variabel finalElement pasti ada isinya)
+    sendFinalElement(finalElement);
 
+    // 5. Cleanup / Reset State
     unlockElement(selectedId);
     setSelectedId(null);
     setSelectedPosition(CursorPosition.OUTSIDE);
@@ -409,9 +483,12 @@ export default function WhiteboardCanvas({ roomId }) {
     ? elements.find((el) => el.id === writingElementId)
     : null;
 
-  // ===== RENDER =====
   return (
-    <WhiteboardShell title="Untitled">
+    <WhiteboardShell
+      title="Untitled"
+      roomId={roomId}
+      handleShareLink={handleShareLink}
+    >
       <div ref={containerRef} className="relative h-full w-full">
         {/* Canvas utama */}
         <canvas
@@ -428,21 +505,24 @@ export default function WhiteboardCanvas({ roomId }) {
           <textarea
             ref={textAreaRef}
             onBlur={handleTextareaBlur}
+            className="fixed-textarea" // Bisa pakai class CSS atau inline style di bawah
             style={{
               position: "absolute",
-              top: writingElement.y1 - 3,
+              top: writingElement.y1, // Hapus offset -3 biar presisi dulu
               left: writingElement.x1,
               font: "24px sans-serif",
+              lineHeight: "30px", // PENTING: Harus match dengan drawElement
               margin: 0,
               padding: 0,
               border: 0,
               outline: 0,
               resize: "none",
               overflow: "hidden",
-              whiteSpace: "pre",
+              whiteSpace: "pre", // Agar enter/spasi terbaca
               background: "transparent",
               zIndex: 30,
               minWidth: "50px",
+              color: "#111827",
             }}
           />
         )}
@@ -566,9 +646,21 @@ function ToolButton({ active, onClick, children }) {
     <button
       type="button"
       onClick={onClick}
-      className={`flex h-10 w-10 items-center justify-center rounded-lg text-sm transition-colors ${
-        active ? "bg-slate-900 text-slate-50" : "bg-slate-100 text-slate-700"
-      }`}
+      className={`
+        flex h-10 w-10 items-center justify-center rounded-xl text-sm
+        border border-transparent
+        transition-all duration-150
+  
+        ${active ? "bg-slate-900 text-slate-50" : "bg-slate-100 text-slate-700"}
+
+        ring-0 ring-offset-2 ring-offset-slate-200
+
+        hover:ring-2
+
+        ${active ? "hover:ring-slate-900/80" : "hover:ring-slate-400/70"}
+
+        hover:-translate-y-[1px] active:translate-y-0
+      `}
     >
       {children}
     </button>
