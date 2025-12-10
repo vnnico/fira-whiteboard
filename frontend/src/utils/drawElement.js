@@ -4,6 +4,9 @@ import { getStroke } from "perfect-freehand";
 import { ToolTypes } from "../constant/constants";
 import { getSvgPathFromStroke } from "./getSvgPathFromStroke";
 
+const FONT_SIZE = 24;
+const LINE_HEIGHT = 30; // Sedikit lebih besar dari font size (1.25x)
+
 function getBounds(el) {
   if (el.type === ToolTypes.PENCIL && el.points?.length) {
     const xs = el.points.map((p) => p.x);
@@ -79,11 +82,16 @@ export function drawElement(ctx, roughCanvas, element, opts = {}) {
   }
 
   if (element.type === ToolTypes.TEXT && element.text) {
-    if (!element.text) return;
     ctx.textBaseline = "top";
-    ctx.font = "24px sans-serif";
-    ctx.fillStyle = "#111827";
-    ctx.fillText(element.text, element.x1, element.y1);
+    ctx.font = `${FONT_SIZE}px sans-serif`;
+    ctx.fillStyle = opts.strokeColor || "#111827"; // Gunakan warna dinamis
+
+    // LOGIC BARU: Multiline Support
+    const lines = element.text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      // Render per baris
+      ctx.fillText(lines[i], element.x1, element.y1 + i * LINE_HEIGHT);
+    }
   }
 }
 

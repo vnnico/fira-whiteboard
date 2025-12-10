@@ -4,13 +4,17 @@ import {
   FiLogOut,
   FiChevronLeft,
   FiChevronRight,
+  FiUsers,
 } from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 
-export default function Sidebar() {
+export default function Sidebar({ activeSection = "my", onChangeSection }) {
   const [collapsed, setCollapsed] = useState(false);
   const { user, logout } = useAuth();
 
+  const handleSelect = (section) => {
+    onChangeSection?.(section);
+  };
   return (
     <aside
       className={`
@@ -31,12 +35,30 @@ export default function Sidebar() {
         </button>
       </div>
 
-      <nav className="flex-1 space-y-1 px-2">
-        <button className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-800">
+      <nav className="mt-4 flex-1 space-y-1 px-2 text-xs">
+        <button
+          onClick={() => handleSelect("my")}
+          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 ${
+            activeSection === "my"
+              ? "bg-slate-800 text-white"
+              : "text-slate-300 hover:bg-slate-800"
+          }`}
+        >
           <FiGrid className="h-4 w-4" />
-          {!collapsed && <span>My Whiteboards</span>}
+          {!collapsed && <span>My whiteboards</span>}
         </button>
-        {/* nanti bisa tambah menu shared, settings, dll */}
+
+        <button
+          onClick={() => handleSelect("joined")}
+          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 ${
+            activeSection === "joined"
+              ? "bg-slate-800 text-white"
+              : "text-slate-300 hover:bg-slate-800"
+          }`}
+        >
+          <FiUsers className="h-4 w-4" />
+          {!collapsed && <span>Joined</span>}
+        </button>
       </nav>
 
       <div className="border-t border-slate-800 px-3 py-3 text-xs">

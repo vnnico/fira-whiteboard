@@ -8,8 +8,8 @@ const users = [
   },
   {
     id: "2",
-    username: "testuser",
-    password: "password123",
+    username: "anto",
+    password: "anto",
     displayName: "User-000002",
   },
 ];

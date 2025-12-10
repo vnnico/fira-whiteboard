@@ -1,26 +1,46 @@
-// src/sockets/whiteboardSocket.js
 import {
-  getBoard,
+  getAllBoards,
   upsertElement,
   clearBoard,
+  getBoardById,
+  addMember,
 } from "../models/whiteboardStore.js";
 
 export function registerWhiteboardHandlers(io, socket) {
   // Helper: dapatkan roomId dari payload atau dari socket.data
-  const getRoomId = (roomId) => roomId || socket.data?.roomId;
+  const getRoomId = (roomId) => roomId ?? socket.data?.roomId;
 
   // Handshake: user join ke room tertentu
-  socket.on("join-room", ({ roomId }) => {
+  socket.on("join-room", async ({ roomId }) => {
     if (!roomId) return;
 
     socket.join(roomId);
     socket.data.roomId = roomId;
+    const count = await io.in(roomId).fetchSockets();
 
-    const board = getBoard(roomId);
-    const elements = board?.elements || [];
+    console.log(`A user :${socket.user.username} just joined room : ${roomId}`);
+    console.log(
+      `Now room :${roomId} has total number of ${count.length}connected users `
+    );
+    console.log("==========");
 
-    // Kirim snapshot hanya ke user ini
-    socket.emit("whiteboard-state", { elements });
+    // LOGIC BARU: Auto-add Member
+    if (socket.user && socket.user.id) {
+      addMember(roomId, socket.user.id);
+    }
+
+    const board = getBoardById(roomId);
+
+    // Kirim elements DAN title
+    socket.emit("whiteboard-state", {
+      elements: board?.elements || [],
+      title: board?.title || "Untitled Whiteboard", // Kirim title ke frontend
+    });
+  });
+
+  // Listener baru: Broadcast perubahan title (real-time)
+  socket.on("title-update", ({ roomId, title }) => {
+    socket.to(roomId).emit("title-update", { title });
   });
 
   // Update elemen (draft & final)
@@ -78,7 +98,7 @@ export function registerWhiteboardHandlers(io, socket) {
 
   // Saat disconnect, beritahu room untuk remove cursor + lock user ini
   socket.on("disconnect", () => {
-    const roomId = socket.data?.roomId;
+    const roomId = getRoomId();
     if (!roomId) return;
 
     io.to(roomId).emit("user-disconnected", { userId: socket.id });

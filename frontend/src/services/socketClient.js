@@ -9,6 +9,7 @@ export function createChatSocket(token) {
 }
 
 export function createWhiteboardSocket(token) {
+  console.log(token);
   return io(`${SERVER_URL}/whiteboard`, {
     auth: { token },
   });

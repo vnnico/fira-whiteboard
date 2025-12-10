@@ -12,6 +12,8 @@ export function useWhiteboard(roomId) {
   const [locks, setLocks] = useState({}); // elementId -> userId
   const [cursors, setCursors] = useState([]); // [{userId,x,y}]
 
+  // Data state in mid whiteboard
+  const [title, setTitle] = useState();
   const myUserId = user?.id || "anon";
 
   // ------ socket setup ------
@@ -81,6 +83,9 @@ export function useWhiteboard(roomId) {
         return next;
       });
     });
+
+    // update title in mid whiteboard
+    s.on("title-update", ({ title }) => {});
 
     setSocket(s);
 

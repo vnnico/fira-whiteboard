@@ -30,14 +30,7 @@ export default function App() {
           </PrivateRoute>
         }
       />
-      <Route
-        path="/board/:roomId"
-        element={
-          <PrivateRoute>
-            <WhiteboardPage />
-          </PrivateRoute>
-        }
-      />
+      <Route path="/board/:roomId" element={<WhiteboardPage />} />
     </Routes>
   );
 }

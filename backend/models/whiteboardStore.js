@@ -3,21 +3,55 @@ import { randomUUID } from "crypto";
 
 const boards = new Map();
 // key: roomId, value: { roomId, createdBy, createdAt, elements: [] }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function createBoard({ createdBy }) {
+export async function createBoard({ createdBy }) {
   const roomId = randomUUID();
+  console.log("Creating board...");
   const board = {
     roomId,
+    title: "Untitled Whiteboard",
     createdBy: createdBy || null,
+    members: createdBy ? [createdBy] : [],
     createdAt: new Date(),
     elements: [],
   };
   boards.set(roomId, board);
+  await sleep(5000);
+  console.log("Done");
+  console.log(board);
   return board;
 }
 
-export function getBoard(roomId) {
+// ambil semua board
+export function getAllBoards() {
+  return Array.from(boards.values());
+}
+
+// kalau butuh 1 board by roomId, bisa tambah ini:
+export function getBoardById(roomId) {
   return boards.get(roomId) || null;
+}
+
+// Fungsi untuk update title
+export function updateBoardTitle(roomId, newTitle) {
+  const board = boards.get(roomId);
+  if (board) {
+    board.title = newTitle;
+  }
+  return board;
+}
+
+export function addMember(roomId, userId) {
+  const board = boards.get(roomId);
+  if (board && userId && !board.members.includes(userId)) {
+    board.members.push(userId);
+  }
+  console.log("*******");
+  console.log("Add new member: ", userId);
+  console.log("Current boards: ", board);
+  console.log("*******");
+  return board;
 }
 
 export function upsertElement(roomId, element) {

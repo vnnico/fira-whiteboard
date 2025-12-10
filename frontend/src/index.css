@@ -5,3 +5,7 @@
   --color-fira-dark: #111827;
   --color-fira-light: #f9fafb;
 }
+
+button {
+  cursor: pointer;
+}

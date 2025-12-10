@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import Input from "../components/ui/Input";
 import Button from "../components/ui/Button";
 import { useAuth } from "../hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "../hooks/useToast";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 
@@ -15,6 +15,8 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  const location = useLocation();
+
   const handleChange = (e) => {
     setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
   };
@@ -25,7 +27,10 @@ export default function LoginPage() {
     try {
       await login(form.username, form.password);
       showToast("Welcome to Fira 👋", "success");
-      navigate("/");
+      // LOGIC BARU: Cek apakah ada tiket "titipan" (from)?
+      // Kalau ada, kembalikan ke sana. Kalau tidak, ke dashboard ('/')
+      const from = location.state?.from?.pathname || "/";
+      navigate(from, { replace: true });
     } catch (err) {
       console.log(err);
       showToast("Invalid username or password", "error");
