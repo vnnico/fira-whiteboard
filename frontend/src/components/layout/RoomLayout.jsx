@@ -7,7 +7,12 @@ import ManagementSidebar from "./ManagementSidebar";
 import { updateBoardTitle } from "../../services/whiteboardApi";
 import { useToast } from "../../hooks/useToast";
 
-export default function RoomLayout({ children, roomId, title = "Untitled" }) {
+export default function RoomLayout({
+  children,
+  roomId,
+  title = "Untitled",
+  onTitleUpdated,
+}) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const voiceState = useMockVoiceState();
 
@@ -46,9 +51,9 @@ export default function RoomLayout({ children, roomId, title = "Untitled" }) {
     try {
       setIsSaving(true);
       const res = await updateBoardTitle(roomId, nextTitle);
-      const finalTitle = res?.title || nextTitle;
+      const finalTitle = res?.board?.title || res?.title || nextTitle;
       setLocalTitle(finalTitle);
-
+      onTitleUpdated?.(finalTitle);
       showToast("Title updated", "success");
       setIsEditing(false);
     } catch (err) {

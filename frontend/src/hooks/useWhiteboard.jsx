@@ -27,8 +27,9 @@ export function useWhiteboard(roomId) {
     });
 
     // snapshot
-    s.on("whiteboard-state", ({ elements: initialElements }) => {
+    s.on("whiteboard-state", ({ elements: initialElements, title }) => {
       setElements(initialElements || []);
+      if (typeof title === "string" && title.trim()) setTitle(title);
     });
 
     // realtime element update
@@ -85,7 +86,9 @@ export function useWhiteboard(roomId) {
     });
 
     // update title in mid whiteboard
-    s.on("title-update", ({ title }) => {});
+    s.on("title-update", ({ title }) => {
+      if (typeof title === "string" && title.trim()) setTitle(title);
+    });
 
     setSocket(s);
 
@@ -123,6 +126,7 @@ export function useWhiteboard(roomId) {
 
   const api = useMemo(() => {
     return {
+      title,
       elements,
       setElements, // untuk dipakai WhiteboardCanvas (local rendering)
       locks,

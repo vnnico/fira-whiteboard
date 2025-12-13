@@ -27,11 +27,12 @@ export function createElement({ id, type, x1, y1, x2, y2, text }) {
     return {
       id,
       type,
+      base,
       x1,
       y1,
       x2,
       y2,
-      text: text || "",
+      text: text ?? "",
     };
   }
 

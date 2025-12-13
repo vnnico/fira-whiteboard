@@ -37,8 +37,8 @@ export default function WhiteboardPage() {
   }
 
   return (
-    <RoomLayout roomId={roomId} title={title}>
-      <WhiteboardCanvas roomId={roomId} />
+    <RoomLayout roomId={roomId} title={title} onTitleUpdated={setTitle}>
+      <WhiteboardCanvas roomId={roomId} onTitleChange={setTitle} />
     </RoomLayout>
   );
 }

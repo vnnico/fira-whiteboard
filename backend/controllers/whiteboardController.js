@@ -13,6 +13,8 @@ import {
   getBoardById,
 } from "../models/whiteboardStore.js";
 
+import { getWhiteboardNameSpace } from "../sockets/index.js";
+
 // GET /api/whiteboards/:roomId
 export async function getWhiteboard(req, res, next) {
   try {
@@ -65,6 +67,9 @@ export async function updateTitle(req, res, next) {
     const board = updateBoardTitle(roomId, title);
 
     if (!board) return res.status(404).json({ message: "Board not found" });
+    getWhiteboardNameSpace()
+      ?.to(roomId)
+      .emit("title-update", { title: board.title });
 
     res.status(200).json({ board });
   } catch (err) {

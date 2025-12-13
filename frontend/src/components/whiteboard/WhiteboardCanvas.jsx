@@ -29,8 +29,9 @@ import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
 const CANVAS_SIZE = 8000;
 
-export default function WhiteboardCanvas({ roomId }) {
+export default function WhiteboardCanvas({ roomId, onTitleChange }) {
   const {
+    title,
     elements,
     setElements,
     locks,
@@ -51,6 +52,9 @@ export default function WhiteboardCanvas({ roomId }) {
   const [selectedPosition, setSelectedPosition] = useState(
     CursorPosition.OUTSIDE
   );
+  const [textDraft, setTextDraft] = useState("");
+  const textOriginalRef = useRef(null);
+  const [isTextFocused, setIsTextFocused] = useState(false);
 
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -64,12 +68,88 @@ export default function WhiteboardCanvas({ roomId }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const [scale, setScale] = useState(1);
+  const isClampingRef = useRef(false);
 
   const interactionRef = useRef({
     originX: 0,
     originY: 0,
     originalElement: null,
   });
+
+  const elementsToRender = writingElementId
+    ? elements.filter((el) => el?.id !== writingElementId)
+    : elements;
+
+  const beginEditText = (el) => {
+    if (!el?.id) return;
+
+    textOriginalRef.current = el;
+    setWritingElementId(el.id);
+    setTextDraft(el.text ?? "");
+    lockElement(el.id);
+  };
+
+  const autosizeTextarea = useCallback(() => {
+    const ta = textAreaRef.current;
+    if (!ta) return;
+
+    // reset dulu supaya bisa mengecil juga
+    ta.style.height = "0px";
+    ta.style.width = "0px";
+
+    // lalu ukur
+    ta.style.height = `${ta.scrollHeight}px`;
+    ta.style.width = `${Math.max(50, ta.scrollWidth + 2)}px`;
+  }, []);
+
+  const clampTransformToBounds = useCallback(() => {
+    const ref = transformRef.current;
+    if (!ref) return;
+
+    const { instance } = ref;
+    if (!instance?.wrapperComponent) return;
+
+    const { scale, positionX, positionY } = instance.transformState;
+    const wrapperRect = instance.wrapperComponent.getBoundingClientRect();
+
+    const wrapperWidth = wrapperRect.width;
+    const wrapperHeight = wrapperRect.height;
+
+    const contentWidth = CANVAS_SIZE * scale;
+    const contentHeight = CANVAS_SIZE * scale;
+
+    const minX = wrapperWidth - contentWidth;
+    const minY = wrapperHeight - contentHeight;
+
+    const maxX = 0;
+    const maxY = 0;
+
+    let newX = positionX;
+    let newY = positionY;
+
+    if (contentWidth > wrapperWidth) {
+      newX = Math.min(maxX, Math.max(minX, newX));
+    } else {
+      newX = (wrapperWidth - contentWidth) / 2;
+    }
+
+    if (contentHeight > wrapperHeight) {
+      newY = Math.min(maxY, Math.max(minY, newY));
+    } else {
+      newY = (wrapperHeight - contentHeight) / 2;
+    }
+
+    // kalau beda cukup signifikan, setTransform
+    if (Math.abs(newX - positionX) > 0.5 || Math.abs(newY - positionY) > 0.5) {
+      isClampingRef.current = true;
+      ref.setTransform(newX, newY, scale, 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!writingElementId) return;
+    autosizeTextarea();
+  }, [textDraft, writingElementId, autosizeTextarea]);
 
   useEffect(() => {
     const handleWheel = (e) => {
@@ -134,8 +214,15 @@ export default function WhiteboardCanvas({ roomId }) {
   useEffect(() => {
     if (writingElementId && textAreaRef.current) {
       textAreaRef.current.focus();
+
+      requestAnimationFrame(() => {
+        const ta = textAreaRef.current;
+        if (!ta) return;
+        ta.focus();
+        autosizeTextarea();
+      });
     }
-  }, [writingElementId]);
+  }, [writingElementId, autosizeTextarea]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -145,7 +232,7 @@ export default function WhiteboardCanvas({ roomId }) {
 
       // Render awal
       const ctx = canvas.getContext("2d");
-      drawElements(ctx, elements, locks, myUserId);
+      drawElements(ctx, elementsToRender, locks, myUserId);
     }
   }, []); // Run once
 
@@ -156,8 +243,12 @@ export default function WhiteboardCanvas({ roomId }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawElements(ctx, elements, locks, myUserId);
-  }, [elements, locks, myUserId]);
+    drawElements(ctx, elementsToRender, locks, myUserId);
+  }, [elementsToRender, locks, myUserId]);
+
+  useEffect(() => {
+    if (typeof onTitleChange === "function") onTitleChange(title);
+  }, [title, onTitleChange]);
 
   const getRelativePos = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -176,58 +267,66 @@ export default function WhiteboardCanvas({ roomId }) {
   const handleTextareaBlur = (e) => {
     if (!writingElementId) return;
 
-    const value = e.target.value; // Jangan di-trim total, user mungkin mau spasi di akhir
+    const value = textDraft ?? ""; // Jangan di-trim total, user mungkin mau spasi di akhir
     const id = writingElementId;
     setWritingElementId(null);
 
+    const current = elements.find((el) => el?.id === id);
+    if (!current) {
+      unlockElement(id);
+      return;
+    }
+
     // Hapus jika kosong total
     if (!value.trim()) {
-      setElements((prev) => prev.filter((el) => el.id !== id));
+      setElements((prev) => prev.filter((el) => el?.id !== id));
+      unlockElement(id);
       return;
     }
 
     // Update element TEXT
-    let finalElement = null;
+    let x2 = current.x1;
+    let y2 = current.y1;
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        const FONT_SIZE = 24;
+        const LINE_HEIGHT = 30;
+        ctx.save();
+        ctx.font = `${FONT_SIZE}px sans-serif`;
+        const lines = value.split("\n");
+        let maxWidth = 0;
+        for (const line of lines) {
+          const w = ctx.measureText(line).width;
+          if (w > maxWidth) maxWidth = w;
+        }
+        const totalHeight = lines.length * LINE_HEIGHT;
+        x2 = current.x1 + Math.max(1, Math.ceil(maxWidth));
+        y2 = current.y1 + totalHeight;
+        ctx.restore();
+      }
+    }
+
+    const finalElement = {
+      ...current,
+      type: ToolTypes.TEXT,
+      text: value,
+      x2,
+      y2,
+      stroke: current.stroke ?? "#111827",
+      strokeWidth: current.strokeWidth ?? 2,
+    };
 
     setElements((prev) =>
-      prev.map((el) => {
-        if (el.id !== id) return el;
-
-        let x2 = el.x1;
-        let y2 = el.y1;
-
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext("2d");
-          const FONT_SIZE = 24;
-          const LINE_HEIGHT = 30;
-          ctx.font = `${FONT_SIZE}px sans-serif`;
-
-          const lines = value.split("\n");
-
-          // Hitung Max Width
-          let maxWidth = 0;
-          lines.forEach((line) => {
-            const width = ctx.measureText(line).width;
-            if (width > maxWidth) maxWidth = width;
-          });
-
-          // Hitung Total Height
-          const totalHeight = lines.length * LINE_HEIGHT;
-
-          // Simpan bounding box yang akurat
-          x2 = el.x1 + maxWidth;
-          y2 = el.y1 + totalHeight;
-        }
-
-        // ... return finalElement
-        return finalElement;
-      })
+      prev.map((el) => (el?.id === id ? finalElement : el))
     );
+    sendFinalElement(finalElement);
+    unlockElement(id);
 
-    if (finalElement) {
-      sendFinalElement(finalElement);
-    }
+    setTextDraft("");
+    textOriginalRef.current = null;
   };
 
   // ===== MOUSE DOWN =====
@@ -254,8 +353,12 @@ export default function WhiteboardCanvas({ roomId }) {
       });
 
       setElements((prev) => [...prev, element]);
+      sendDraftElement(element);
+      lockElement(id);
       // 2) Simpan ID untuk dipakai render textarea
       setWritingElementId(id);
+      setTextDraft("");
+      textOriginalRef.current = null;
       return;
     }
 
@@ -619,6 +722,13 @@ export default function WhiteboardCanvas({ roomId }) {
     <div
       ref={containerRef}
       className="relative h-full w-full bg-slate-50 overflow-hidden"
+      onMouseDownCapture={(e) => {
+        if (!writingElementId) return;
+        const ta = textAreaRef.current;
+        if (ta && (e.target === ta || ta.contains(e.target))) return;
+        // klik di luar textarea => commit
+        ta?.blur();
+      }}
     >
       <TransformWrapper
         ref={transformRef}
@@ -630,7 +740,8 @@ export default function WhiteboardCanvas({ roomId }) {
         //  Matikan Panning kalau user sedang TIDAK pegang Hand Tool
         // Agar user bisa draw (Pencil) tanpa canvasnya ikut geser
         panning={{
-          disabled: currentTool !== ToolTypes.HAND,
+          disabled: currentTool !== ToolTypes.HAND || !!writingElementId,
+          excluded: ["wb-text-editor"],
           velocityDisabled: false,
           velocityAnimation: {
             sensitivity: 0.5, // Default biasanya 1, Turunkan biar gak gampang "terlempar" jauh.
@@ -642,10 +753,17 @@ export default function WhiteboardCanvas({ roomId }) {
           step: 0.05,
           smoothStep: 0.002,
           activationKeys: ["Control", "Meta"],
+          disabled: !!writingElementId,
+          excluded: ["wb-text-editor"],
         }} // Zoom pakai scroll mouse
         doubleClick={{ disabled: true }}
         onTransformed={(instance) => {
           setScale(instance.state.scale);
+          if (isClampingRef.current) {
+            isClampingRef.current = false;
+            return;
+          }
+          clampTransformToBounds();
         }}
       >
         <TransformComponent
@@ -678,12 +796,77 @@ export default function WhiteboardCanvas({ roomId }) {
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseLeave}
+              onDoubleClick={(e) => {
+                if (writingElementId) return;
+
+                // kalau tool kamu namanya POINTER/SELECT, sesuaikan saja
+                if (currentTool !== ToolTypes.POINTER) return;
+
+                const { x, y } = getRelativePos(e);
+                const { element } = getElementAtPosition(elements, x, y);
+
+                if (element?.type === ToolTypes.TEXT) {
+                  beginEditText(element);
+                }
+              }}
             />
 
             {writingElement && (
               <textarea
+                className="wb-text-editor"
                 ref={textAreaRef}
-                onBlur={handleTextareaBlur}
+                value={textDraft}
+                onChange={(e) => setTextDraft(e.target.value)}
+                onFocus={() => setIsTextFocused(true)}
+                onBlur={(e) => {
+                  setIsTextFocused(false);
+                  handleTextareaBlur(e);
+                }}
+                wrap="off"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onPointerDownCapture={(e) => e.stopPropagation()}
+                onPointerMoveCapture={(e) => e.stopPropagation()}
+                onMouseDownCapture={(e) => e.stopPropagation()}
+                spellCheck={false}
+                autoCorrect="off"
+                autoComplete="off"
+                autoCapitalize="off"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    const id = writingElementId;
+
+                    const original = textOriginalRef.current;
+
+                    // kalau edit existing => restore elemen lama
+                    if (original?.id === id) {
+                      setElements((prev) =>
+                        prev.map((el) => (el?.id === id ? original : el))
+                      );
+                    } else {
+                      // kalau create baru => hapus placeholder
+                      setElements((prev) => prev.filter((el) => el?.id !== id));
+                    }
+                    setWritingElementId(null);
+                    setTextDraft("");
+                    textOriginalRef.current = null;
+                    unlockElement(id);
+                    return;
+                  }
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                onInput={(e) => {
+                  const ta = e.currentTarget;
+                  ta.style.height = "auto";
+                  ta.style.height = `${ta.scrollHeight}px`;
+                  ta.style.width = "auto";
+                  ta.style.width = `${Math.max(50, ta.scrollWidth + 2)}px`;
+                }}
                 style={{
                   position: "absolute",
                   top: writingElement.y1,
@@ -691,20 +874,33 @@ export default function WhiteboardCanvas({ roomId }) {
                   font: "24px sans-serif",
                   lineHeight: "30px",
                   margin: 0,
-                  padding: 0,
+                  padding: "2px 4px",
                   border: 0,
                   outline: 0,
                   resize: "none",
                   overflow: "hidden",
                   whiteSpace: "pre",
-                  background: "transparent",
-                  zIndex: 30,
+                  background: "rgba(255,255,255,0.88)",
+
+                  borderRadius: "6px",
+
+                  overflow: "hidden",
+                  boxShadow:
+                    "0 0 0 1px rgba(59,130,246,0.8), 0 0 0 2px rgba(59,130,246,0.10)",
+                  caretColor: "#111827",
+                  zIndex: 50,
                   minWidth: "50px",
                   color: "#111827",
+                  pointerEvents: "auto",
+                  userSelect: "text",
+                  cursor: "text",
+                  pointerEvents: "auto",
                 }}
               />
             )}
-            <CursorOverlay cursors={cursors} />
+            <div style={{ pointerEvents: "none" }}>
+              <CursorOverlay cursors={cursors} />
+            </div>
           </div>
         </TransformComponent>
       </TransformWrapper>
@@ -731,6 +927,7 @@ export default function WhiteboardCanvas({ roomId }) {
             <ToolButton
               active={currentTool === ToolTypes.POINTER}
               onClick={() => {
+                if (writingElementId) textAreaRef.current?.blur();
                 setCurrentTool(ToolTypes.POINTER);
                 setAction(ActionTypes.NONE);
               }}

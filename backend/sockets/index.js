@@ -6,6 +6,11 @@ import { registerChatHandlers } from "./chatSocket.js";
 import { registerWhiteboardHandlers } from "./whiteboardSocket.js";
 import { registerCallHandlers } from "./callSocket.js";
 
+let whiteboardNamespaceRef = null;
+export function getWhiteboardNameSpace() {
+  return whiteboardNamespaceRef;
+}
+
 export function initSocket(server) {
   const io = new Server(server, {
     cors: {
@@ -39,6 +44,7 @@ export function initSocket(server) {
 
   const whiteboardNamespace = io.of("/whiteboard");
   whiteboardNamespace.use(authMiddleware);
+  whiteboardNamespaceRef = whiteboardNamespace;
   whiteboardNamespace.on("connection", async (socket) => {
     const sockets = await io.fetchSockets();
     const wbSockets = await io.of("/whiteboard").fetchSockets();
