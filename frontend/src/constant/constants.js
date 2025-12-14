@@ -29,6 +29,8 @@ export const CursorPosition = {
   RIGHT: "RIGHT",
   TOP: "TOP",
   BOTTOM: "BOTTOM",
+  LINE_START: "LINE_START",
+  LINE_END: "LINE_END",
 };
 
 export const SHORTCUTS = [

@@ -82,16 +82,21 @@ export function drawElement(ctx, roughCanvas, element, opts = {}) {
   }
 
   if (element.type === ToolTypes.TEXT && element.text) {
-    ctx.textBaseline = "top";
-    ctx.font = `${FONT_SIZE}px sans-serif`;
-    ctx.fillStyle = opts.strokeColor || "#111827"; // Gunakan warna dinamis
+    const fontSize = element.fontSize ?? FONT_SIZE;
+    const lineHeight = element.lineHeight ?? LINE_HEIGHT;
 
-    // LOGIC BARU: Multiline Support
+    ctx.save();
+    ctx.textBaseline = "top";
+    ctx.font = `${fontSize}px sans-serif`;
+
+    // prioritas: warna di element dulu, baru opts, lalu default
+    ctx.fillStyle = element.stroke ?? opts.strokeColor ?? "#111827";
+
     const lines = element.text.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      // Render per baris
-      ctx.fillText(lines[i], element.x1, element.y1 + i * LINE_HEIGHT);
+      ctx.fillText(lines[i], element.x1, element.y1 + i * lineHeight);
     }
+    ctx.restore();
   }
 }
 
