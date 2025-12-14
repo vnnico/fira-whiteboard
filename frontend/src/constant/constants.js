@@ -58,4 +58,27 @@ export const SHORTCUTS = [
     ctrl: true,
     preventDefault: true,
   },
+  {
+    keys: ["c"],
+    action: "COPY",
+    ctrl: true,
+    preventDefault: true,
+  },
+  {
+    keys: ["v"],
+    action: "PASTE",
+    ctrl: true,
+    preventDefault: true,
+  },
+  {
+    keys: ["d"],
+    action: "DUPLICATE",
+    ctrl: true,
+    preventDefault: true,
+  },
+  {
+    keys: ["delete", "backspace"],
+    action: "DELETE_SELECTED",
+    preventDefault: true,
+  },
 ];

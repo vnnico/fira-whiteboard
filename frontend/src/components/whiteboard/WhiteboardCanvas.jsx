@@ -29,11 +29,15 @@ import { useNavigate } from "react-router-dom";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 
-import { drawSelectionOverlay } from "../../utils/drawSelectionOverlay";
+import {
+  drawSelectionOverlay,
+  getElementBounds,
+} from "../../utils/drawSelectionOverlay";
 import { getSelectionHitPosition } from "../../utils/getSelectionHitPosition";
 import { useElementSelection } from "../../hooks/useElementSelection";
 
 const CANVAS_SIZE = 8000;
+const CLIPBOARD_OFFSET = 20;
 
 export default function WhiteboardCanvas({ roomId, onTitleChange }) {
   const {
@@ -87,9 +91,71 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
     originalElement: null,
   });
 
+  //  Copy / Paste / Duplicate (internal clipboard per-tab & per-room)
+  // Clipboard disimpan di memory (useRef) => otomatis tidak bisa lintas tab.
+  // Kita juga simpan roomId supaya tidak bisa paste lintas room.
+  const clipboardRef = useRef(null);
+  const lastMousePosRef = useRef({ x: 0, y: 0 });
+
+  const genSeed = useCallback(() => Math.floor(Math.random() * 2 ** 31), []);
+
+  const deepCloneElement = useCallback((el) => {
+    if (!el) return null;
+
+    // structuredClone aman untuk object/array (browser modern)
+    if (typeof structuredClone === "function") return structuredClone(el);
+
+    // fallback manual (cukup untuk shape)
+    const cloned = { ...el };
+    if (el.points) cloned.points = el.points.map((p) => ({ ...p }));
+    if (el.base && typeof el.base === "object") cloned.base = { ...el.base };
+    return cloned;
+  }, []);
+
+  const cloneWithTransform = useCallback(
+    (source, { dx, dy }) => {
+      const newEl = deepCloneElement(source);
+      if (!newEl) return null;
+
+      const newId = crypto.randomUUID();
+      newEl.id = newId;
+
+      // kalau ada nested base (legacy TEXT), biar konsisten
+      if (newEl.base && typeof newEl.base === "object") {
+        newEl.base.id = newId;
+      }
+
+      // offset koordinat
+      if (newEl.type === ToolTypes.PENCIL && Array.isArray(newEl.points)) {
+        newEl.points = newEl.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+      } else {
+        if (typeof newEl.x1 === "number") newEl.x1 += dx;
+        if (typeof newEl.y1 === "number") newEl.y1 += dy;
+        if (typeof newEl.x2 === "number") newEl.x2 += dx;
+        if (typeof newEl.y2 === "number") newEl.y2 += dy;
+      }
+
+      // reset seed roughJS supaya tidak 100% identik
+      const nextSeed = genSeed();
+      newEl.seed = nextSeed;
+      if (
+        newEl.base &&
+        typeof newEl.base === "object" &&
+        "seed" in newEl.base
+      ) {
+        newEl.base.seed = nextSeed;
+      }
+
+      return newEl;
+    },
+    [deepCloneElement, genSeed]
+  );
+
+  const elementsActive = elements.filter((el) => el && !el.isDeleted);
+
   const elementsToRender = writingElementId
-    ? elements.filter((el) => el?.id !== writingElementId)
-    : elements;
+    ? elementsActive.filter((el) => el?.id !== writingElementId)
+    : elementsActive;
 
   const { select, deselect, unlockIfOwned, isLockedByOther } =
     useElementSelection({
@@ -102,6 +168,139 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
       lockElement,
       unlockElement,
     });
+
+  const copySelected = useCallback(() => {
+    // jangan ganggu state interaksi (drag/drawing/text editing)
+    if (action !== ActionTypes.NONE) return;
+    if (writingElementId) return;
+    if (!selectedId) return;
+
+    const el = elements.find((e) => e?.id === selectedId);
+    if (!el) return;
+
+    clipboardRef.current = {
+      roomId,
+      element: deepCloneElement(el),
+    };
+  }, [
+    action,
+    writingElementId,
+    selectedId,
+    elements,
+    roomId,
+    deepCloneElement,
+  ]);
+
+  const pasteFromClipboard = useCallback(() => {
+    if (action !== ActionTypes.NONE) return;
+    if (writingElementId) return;
+
+    const clip = clipboardRef.current;
+    if (!clip?.element) return;
+    if (clip.roomId !== roomId) return; // tidak bisa paste lintas room
+
+    const source = clip.element;
+
+    // paste dekat posisi cursor terakhir (plus offset kecil)
+    const b = getElementBounds(source);
+    const left = Math.min(b.x1, b.x2);
+    const top = Math.min(b.y1, b.y2);
+
+    const cursor = lastMousePosRef.current || { x: left, y: top };
+    const dx = cursor.x - left + CLIPBOARD_OFFSET;
+    const dy = cursor.y - top + CLIPBOARD_OFFSET;
+
+    const newEl = cloneWithTransform(source, { dx, dy });
+    if (!newEl) return;
+
+    setElements((prev) => [...prev, newEl]);
+    sendFinalElement(newEl);
+
+    // pilih element baru (auto-lock via select())
+    select(newEl.id, CursorPosition.INSIDE);
+  }, [
+    action,
+    writingElementId,
+    roomId,
+    setElements,
+    sendFinalElement,
+    select,
+    cloneWithTransform,
+  ]);
+
+  const duplicateSelected = useCallback(() => {
+    if (action !== ActionTypes.NONE) return;
+    if (writingElementId) return;
+    if (!selectedId) return;
+
+    const el = elements.find((e) => e?.id === selectedId);
+    if (!el) return;
+
+    const newEl = cloneWithTransform(el, {
+      dx: CLIPBOARD_OFFSET,
+      dy: CLIPBOARD_OFFSET,
+    });
+    if (!newEl) return;
+
+    setElements((prev) => [...prev, newEl]);
+    sendFinalElement(newEl);
+    select(newEl.id, CursorPosition.INSIDE);
+  }, [
+    action,
+    writingElementId,
+    selectedId,
+    elements,
+    setElements,
+    sendFinalElement,
+    select,
+    cloneWithTransform,
+  ]);
+
+  const deleteSelected = useCallback(() => {
+    // jangan hapus saat sedang dragging/drawing atau editing text
+    if (action !== ActionTypes.NONE) return;
+    if (writingElementId) return;
+    if (!selectedId) return;
+
+    // kalau dikunci user lain, jangan boleh hapus
+    if (isLockedByOther(selectedId)) return;
+
+    const el = elements.find((e) => e?.id === selectedId);
+    if (!el) return;
+
+    const deleted = {
+      ...el,
+      isDeleted: true,
+      deletedAt: Date.now(),
+      deletedBy: myUserId,
+    };
+
+    setElements((prev) =>
+      prev.map((e) => (e?.id === selectedId ? deleted : e))
+    );
+
+    // persist + broadcast ke semua user
+    sendFinalElement(deleted);
+
+    // pastikan lock dilepas supaya tidak ada "ghost lock"
+    unlockElement(selectedId);
+
+    // clear selection lokal
+    deselect();
+    setAction(ActionTypes.NONE);
+  }, [
+    action,
+    writingElementId,
+    selectedId,
+    elements,
+    myUserId,
+    isLockedByOther,
+    setElements,
+    sendFinalElement,
+    unlockElement,
+    deselect,
+    setAction,
+  ]);
 
   const beginEditText = (el) => {
     if (!el?.id) return;
@@ -475,7 +674,7 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
       }
 
       //  normal hit test ke element
-      const { element, position } = getElementAtPosition(elements, x, y);
+      const { element, position } = getElementAtPosition(elementsActive, x, y);
 
       if (!element) {
         deselect();
@@ -511,6 +710,10 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
 
   const handleMouseMove = (e) => {
     const { x, y } = getRelativePos(e);
+
+    // simpan posisi cursor terakhir (buat paste dekat cursor)
+    lastMousePosRef.current = { x, y };
+
     sendCursor(x, y);
 
     const canvas = canvasRef.current;
@@ -531,7 +734,7 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
           }
         }
 
-        const { position } = getElementAtPosition(elements, x, y);
+        const { position } = getElementAtPosition(elementsActive, x, y);
         canvas.style.cursor = getCursorForPosition(position);
       } else if (currentTool === ToolTypes.TEXT) {
         canvas.style.cursor = "text";
@@ -802,26 +1005,43 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
     ? elements.find((el) => el.id === writingElementId)
     : null;
 
-  const handleShortcutAction = useCallback((act) => {
-    switch (act) {
-      case "ZOOM_IN":
-        transformRef.current?.zoomIn();
-        break;
-      case "ZOOM_OUT":
-        transformRef.current?.zoomOut();
-        break;
-      case "TOOL_POINTER":
-        setCurrentTool(ToolTypes.POINTER);
-        setAction(ActionTypes.NONE);
-        break;
-      case "TOOL_HAND":
-        setCurrentTool(ToolTypes.HAND);
-        setAction(ActionTypes.NONE);
-        break;
-      default:
-        break;
-    }
-  }, []);
+  const handleShortcutAction = useCallback(
+    (act) => {
+      switch (act) {
+        case "COPY":
+          copySelected();
+          break;
+        case "PASTE":
+          pasteFromClipboard();
+          break;
+        case "DUPLICATE":
+          duplicateSelected();
+          break;
+
+        case "DELETE_SELECTED":
+          deleteSelected();
+          break;
+
+        case "ZOOM_IN":
+          transformRef.current?.zoomIn();
+          break;
+        case "ZOOM_OUT":
+          transformRef.current?.zoomOut();
+          break;
+        case "TOOL_POINTER":
+          setCurrentTool(ToolTypes.POINTER);
+          setAction(ActionTypes.NONE);
+          break;
+        case "TOOL_HAND":
+          setCurrentTool(ToolTypes.HAND);
+          setAction(ActionTypes.NONE);
+          break;
+        default:
+          break;
+      }
+    },
+    [copySelected, pasteFromClipboard, duplicateSelected, deleteSelected]
+  );
   useKeyboardShortcuts(handleShortcutAction);
 
   const handleResetZoom = () => {
@@ -881,6 +1101,17 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
   }, []);
+
+  // Mencegah state selectedId nyangkut saat element hilang karena soft delete orang lain
+  useEffect(() => {
+    if (!selectedId) return;
+
+    const el = elements.find((e) => e?.id === selectedId);
+    if (!el || el.isDeleted) {
+      deselect();
+      setAction(ActionTypes.NONE);
+    }
+  }, [elements, selectedId, deselect, setAction]);
 
   return (
     <div
@@ -962,7 +1193,7 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
                 if (currentTool !== ToolTypes.POINTER) return;
 
                 const { x, y } = getRelativePos(e);
-                const { element } = getElementAtPosition(elements, x, y);
+                const { element } = getElementAtPosition(elementsActive, x, y);
 
                 if (element?.type === ToolTypes.TEXT) beginEditText(element);
               }}
@@ -1124,9 +1355,17 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
             <ToolButton
               active={false}
               onClick={() => {
-                setWritingElementId(null);
-                deselect();
-                clearBoard(true);
+                if (writingElementId) textAreaRef.current?.blur();
+                if (selectedId) {
+                  deleteSelected();
+                  return;
+                }
+
+                if (confirm("Are you sure to clear whiteboad?")) {
+                  setWritingElementId(null);
+                  deselect();
+                  clearBoard(true);
+                }
               }}
             >
               ⌫
