@@ -1,20 +1,66 @@
 import React, { useState, useEffect, useRef } from "react";
 import { FiShare2, FiMenu, FiChevronLeft } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
-import { useMockVoiceState } from "../../hooks/useMockVoiceState";
+import { useVoiceState } from "../../hooks/useVoiceState";
 import CommDock from "./CommDock";
 import ManagementSidebar from "./ManagementSidebar";
 import { updateBoardTitle } from "../../services/whiteboardApi";
 import { useToast } from "../../hooks/useToast";
+import { useCallback } from "react";
+import { useMemo } from "react";
+import { useAuth } from "../../hooks/useAuth";
 
 export default function RoomLayout({
   children,
   roomId,
   title = "Untitled",
   onTitleUpdated,
+  roomMembers = [],
+  kickUserFn,
+  setUserRoleFn,
 }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const voiceState = useMockVoiceState();
+  const voiceState = useVoiceState({ roomId });
+  const { user } = useAuth();
+  const myUserId = user?.id || null;
+
+  const normId = (v) => (v === null || v === undefined ? "" : String(v));
+
+  const voiceById = useMemo(() => {
+    const map = new Map();
+    for (const p of voiceState?.participants || []) map.set(normId(p.id), p);
+    return map;
+  }, [voiceState?.participants]);
+
+  const myId = normId(user?.id);
+
+  const participantsForUI = useMemo(() => {
+    if (Array.isArray(roomMembers) && roomMembers.length > 0) {
+      return roomMembers.map((m) => {
+        const mid = normId(m.id);
+        const vp = voiceById.get(mid);
+
+        return {
+          id: mid,
+          name: m.username || m.name || mid,
+          isMe: myId ? mid === myId : false,
+          isInVoice: !!vp,
+          isMuted: vp ? !!vp.isMuted : true,
+          isSpeaking: vp ? !!vp.isSpeaking : false,
+          role: m.role,
+        };
+      });
+    }
+
+    // fallback kalau roomMembers belum ada
+    return (voiceState?.participants || []).map((p) => ({
+      ...p,
+      id: normId(p.id),
+      isInVoice: true,
+    }));
+  }, [roomMembers, voiceById, voiceState?.participants, myId]);
+
+  // const inVoiceCount = voiceState?.participants?.length || 0;
 
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -22,6 +68,27 @@ export default function RoomLayout({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const inputRef = useRef(null);
+
+  const myRole = participantsForUI.find((p) => p.isMe)?.role || "VIEWER";
+
+  const audioUnlockOnceRef = useRef(false);
+
+  const handleAnyUserGesture = useCallback(async () => {
+    // hanya relevan kalau memang perlu unlock audio
+    if (!voiceState?.needsAudioStart) return;
+    if (audioUnlockOnceRef.current) return;
+
+    audioUnlockOnceRef.current = true;
+    try {
+      await voiceState.startAudioPlayback?.();
+    } finally {
+      // kalau masih blocked, izinkan user coba lagi dengan klik berikutnya
+      // (misalnya kalau browser menolak gesture tertentu)
+      if (voiceState.needsAudioStart) {
+        audioUnlockOnceRef.current = false;
+      }
+    }
+  }, [voiceState]);
 
   useEffect(() => {
     setLocalTitle(title || "Untitled");
@@ -33,6 +100,22 @@ export default function RoomLayout({
       inputRef.current.select();
     }
   }, [isEditing]);
+
+  useEffect(() => {
+    const onKicked = async () => {
+      try {
+        // leave voice if connected
+        await voiceState?.leave?.();
+      } catch (_) {
+        // ignore
+      } finally {
+        navigate("/", { replace: true });
+      }
+    };
+
+    window.addEventListener("wb-kicked", onKicked);
+    return () => window.removeEventListener("wb-kicked", onKicked);
+  }, [voiceState, navigate]);
 
   const handleTitleSubmit = async (e) => {
     e?.preventDefault();
@@ -75,8 +158,14 @@ export default function RoomLayout({
     }
   };
 
+  // Avatar panel
+  const topAvatars = (participantsForUI || []).slice(0, 5);
+
   return (
-    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-slate-50">
+    <div
+      className="relative flex h-screen w-screen flex-col overflow-hidden bg-slate-50"
+      onPointerDownCapture={handleAnyUserGesture}
+    >
       <header className="pointer-events-none absolute left-0 right-0 top-0 z-10 flex items-center justify-between p-4">
         <div className="pointer-events-auto flex items-center gap-2 rounded-xl bg-white/90 p-1.5 shadow-sm backdrop-blur-sm ring-1 ring-slate-900/5 transition-all hover:bg-white">
           <button
@@ -111,16 +200,34 @@ export default function RoomLayout({
         </div>
 
         <div className="pointer-events-auto flex items-center gap-3">
+          {/* Avatar panel */}
           <div
             className="flex -space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
             onClick={() => setIsSidebarOpen(true)}
           >
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-8 w-8 rounded-full border-2 border-white bg-slate-200 ring-1 ring-slate-900/5"
-              />
-            ))}
+            {topAvatars.length === 0 ? (
+              <div className="h-8 w-8 rounded-full bg-slate-200 ring-2 ring-white" />
+            ) : (
+              topAvatars.map((p) => {
+                const initials = (p.name || "?")
+                  .split(" ")
+                  .slice(0, 2)
+                  .map((s) => s[0]?.toUpperCase())
+                  .join("");
+
+                return (
+                  <div
+                    key={p.id}
+                    className={`h-8 w-8 rounded-full ring-2 ring-white grid place-items-center text-xs font-bold ${
+                      p.isSpeaking ? "bg-emerald-400" : "bg-slate-300"
+                    }`}
+                    title={p.name}
+                  >
+                    {initials}
+                  </div>
+                );
+              })
+            )}
           </div>
           <button
             onClick={handleShare}
@@ -136,6 +243,14 @@ export default function RoomLayout({
             <FiMenu className="text-slate-600" />
           </button>
         </div>
+
+        {voiceState?.needsAudioStart &&
+          voiceState?.connectionState === "connected" && (
+            <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-xs text-white shadow">
+              Audio diblokir browser. Klik di mana saja untuk mengaktifkan
+              suara.
+            </div>
+          )}
       </header>
 
       <main className="absolute inset-0 z-0">{children}</main>
@@ -147,6 +262,11 @@ export default function RoomLayout({
       <ManagementSidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        participants={participantsForUI}
+        voiceState={voiceState}
+        myRole={myRole}
+        onSetRole={(targetUserId, role) => setUserRoleFn?.(targetUserId, role)}
+        onKick={(targetUserId) => kickUserFn?.(targetUserId)}
       />
     </div>
   );

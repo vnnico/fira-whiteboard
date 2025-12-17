@@ -12,6 +12,24 @@ const users = [
     password: "anto",
     displayName: "User-000002",
   },
+  {
+    id: "3",
+    username: "nico",
+    password: "nico",
+    displayName: "User-000003",
+  },
+  {
+    id: "4",
+    username: "hansen",
+    password: "hansen",
+    displayName: "User-000004",
+  },
+  {
+    id: "5",
+    username: "wilson",
+    password: "wilson",
+    displayName: "User-000005",
+  },
 ];
 
 export function findByUsername(username) {

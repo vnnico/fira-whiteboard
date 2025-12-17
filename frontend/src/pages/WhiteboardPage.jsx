@@ -10,6 +10,9 @@ export default function WhiteboardPage() {
   const { isAuthenticated, loading } = useAuth();
 
   const [title, setTitle] = useState("Untitled");
+  const [roomMembers, setRoomMembers] = useState([]);
+  const [kickUserFn, setKickUserFn] = useState(null);
+  const [setUserRoleFn, setSetUserRoleFn] = useState(null);
 
   if (!roomId)
     return (
@@ -37,8 +40,23 @@ export default function WhiteboardPage() {
   }
 
   return (
-    <RoomLayout roomId={roomId} title={title} onTitleUpdated={setTitle}>
-      <WhiteboardCanvas roomId={roomId} onTitleChange={setTitle} />
+    <RoomLayout
+      roomId={roomId}
+      title={title}
+      onTitleUpdated={setTitle}
+      roomMembers={roomMembers}
+      kickUserFn={kickUserFn}
+      setUserRoleFn={setUserRoleFn}
+    >
+      <WhiteboardCanvas
+        roomId={roomId}
+        onTitleChange={setTitle}
+        onMembersChange={setRoomMembers}
+        onWhiteboardApi={({ kickUser, setUserRole }) => {
+          if (kickUser) setKickUserFn(() => kickUser);
+          if (setUserRole) setSetUserRoleFn(() => setUserRole);
+        }}
+      />
     </RoomLayout>
   );
 }

@@ -21,11 +21,15 @@ export default function CommDock({
     leaveVoice,
     toggleMic,
     toggleDeafen,
+    needsAudioStart,
+    startAudioPlayback,
+    lastError,
+    disconnectReason,
   } = voiceState;
 
   if (connectionState === "disconnected") {
     return (
-      <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2">
+      <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
         <div className="flex items-center overflow-hidden rounded-full bg-white p-1 shadow-xl ring-1 ring-slate-900/5 transition-all hover:scale-105">
           <button
             onClick={joinVoice}
@@ -47,81 +51,103 @@ export default function CommDock({
             )}
           </button>
         </div>
+
+        {lastError && (
+          <div className="max-w-[420px] rounded-full bg-white/90 px-4 py-2 text-xs text-rose-600 shadow ring-1 ring-slate-900/5">
+            {lastError}
+          </div>
+        )}
       </div>
     );
   }
 
   if (connectionState === "connecting") {
     return (
-      <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-white px-6 py-3 shadow-xl ring-1 ring-slate-900/5">
-        <span className="flex items-center gap-2 text-sm font-medium text-slate-600">
-          <svg
-            className="h-4 w-4 animate-spin text-emerald-500"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-              fill="none"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-          Connecting...
-        </span>
+      <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex flex-col items-center gap-2">
+        <div className="rounded-full bg-white px-6 py-3 shadow-xl ring-1 ring-slate-900/5">
+          <span className="flex items-center gap-2 text-sm font-medium text-slate-600">
+            <svg
+              className="h-4 w-4 animate-spin text-emerald-500"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+                fill="none"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            Connecting...
+          </span>
+        </div>
+
+        {lastError && (
+          <div className="max-w-[420px] rounded-full bg-white/90 px-4 py-2 text-xs text-rose-600 shadow ring-1 ring-slate-900/5">
+            {lastError}
+          </div>
+        )}
       </div>
     );
   }
 
   // State CONNECTED (Full Control)
   return (
-    <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center rounded-full bg-white p-1.5 shadow-2xl ring-1 ring-slate-900/5 transition-all">
-      <div className="flex gap-1">
+    <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
+      <div className="flex items-center rounded-full bg-white p-1.5 shadow-2xl ring-1 ring-slate-900/5 transition-all">
+        <div className="flex gap-1">
+          <DockButton
+            active={isMicEnabled}
+            onClick={toggleMic}
+            offIcon={<FiMicOff />}
+            onIcon={<FiMic />}
+            variant={isMicEnabled ? "dark" : "danger"}
+            tooltip="Toggle Mic"
+          />
+          <DockButton
+            active={!isDeafened}
+            onClick={toggleDeafen}
+            offIcon={<FiHeadphones className="opacity-40" />}
+            onIcon={<FiHeadphones />}
+            variant="secondary"
+            tooltip="Deafen"
+          />
+        </div>
+
+        <div className="mx-3 h-8 w-px bg-slate-200" />
+
+        <div className="flex gap-1">
+          <DockButton
+            onClick={onToggleChat}
+            onIcon={<FiMessageSquare />}
+            variant="secondary"
+            hasBadge={unreadCount > 0}
+            tooltip="Chat"
+          />
+        </div>
+
+        <div className="mx-3 h-8 w-px bg-slate-200" />
+
         <DockButton
-          active={isMicEnabled}
-          onClick={toggleMic}
-          offIcon={<FiMicOff />}
-          onIcon={<FiMic />}
-          variant={isMicEnabled ? "dark" : "danger"}
-          tooltip="Toggle Mic"
-        />
-        <DockButton
-          active={!isDeafened}
-          onClick={toggleDeafen}
-          offIcon={<FiHeadphones className="opacity-40" />}
-          onIcon={<FiHeadphones />}
-          variant="secondary"
-          tooltip="Deafen"
+          onClick={leaveVoice}
+          onIcon={<FiPhoneOff />}
+          variant="danger-ghost"
+          tooltip="Disconnect"
         />
       </div>
 
-      <div className="mx-3 h-8 w-px bg-slate-200" />
-
-      <div className="flex gap-1">
-        <DockButton
-          onClick={onToggleChat}
-          onIcon={<FiMessageSquare />}
-          variant="secondary"
-          hasBadge={unreadCount > 0}
-          tooltip="Chat"
-        />
-      </div>
-
-      <div className="mx-3 h-8 w-px bg-slate-200" />
-
-      <DockButton
-        onClick={leaveVoice}
-        onIcon={<FiPhoneOff />}
-        variant="danger-ghost"
-        tooltip="Disconnect"
-      />
+      {lastError && (
+        <div className="max-w-[420px] rounded-full bg-white/90 px-4 py-2 text-xs text-rose-600 shadow ring-1 ring-slate-900/5">
+          {lastError}
+        </div>
+      )}
     </div>
   );
 }

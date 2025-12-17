@@ -14,8 +14,9 @@ export function getWhiteboardNameSpace() {
 export function initSocket(server) {
   const io = new Server(server, {
     cors: {
-      origin: CLIENT_ORIGIN,
-      methods: ["GET", "POST"],
+      origin: true,
+      credentials: true,
+      methods: ["GET", "POST", "PATCH", "OPTIONS"],
     },
   });
 

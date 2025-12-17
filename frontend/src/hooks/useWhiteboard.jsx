@@ -3,12 +3,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import throttle from "lodash.throttle";
 import { createWhiteboardSocket } from "../services/socketClient";
 import { useAuth } from "./useAuth";
+import { useToast } from "./useToast";
 
 export function useWhiteboard(roomId) {
   const { token, user } = useAuth();
   const [socket, setSocket] = useState(null);
 
   const [elements, setElements] = useState([]);
+  const [connectionState, setConnectionState] = useState("disconnected");
+
   const [locks, setLocks] = useState({}); // elementId -> userId
   const [cursors, setCursors] = useState([]); // [{userId,x,y}]
 
@@ -16,13 +19,27 @@ export function useWhiteboard(roomId) {
   const [title, setTitle] = useState("Untitled");
   const myUserId = user?.id || "anon";
 
+  const { showToast } = useToast();
+
+  const [role, setRole] = useState("VIEWER");
+  const [canEdit, setCanEdit] = useState(false);
+  const [locked, setLocked] = useState(false);
+
+  const lastDeniedToastAtRef = useRef(0);
+
+  // Room presence (who is in the room, regardless of voice)
+  const [roomMembers, setRoomMembers] = useState([]);
+
   // ------ socket setup ------
   useEffect(() => {
     if (!token || !roomId) return;
 
     const s = createWhiteboardSocket(token);
+    setConnectionState("reconnecting");
 
     s.on("connect", () => {
+      setConnectionState("connected");
+
       s.emit("join-room", { roomId });
     });
 
@@ -90,6 +107,41 @@ export function useWhiteboard(roomId) {
       if (typeof title === "string" && title.trim()) setTitle(title);
     });
 
+    // permissions snapshot from server
+    s.on("room-permissions", ({ role, canEdit, locked }) => {
+      if (role) setRole(role);
+      setCanEdit(!!canEdit);
+      setLocked(!!locked);
+    });
+
+    // server-side enforcement feedback
+    s.on("permission-denied", ({ message }) => {
+      const now = Date.now();
+      if (now - lastDeniedToastAtRef.current < 1500) return;
+      lastDeniedToastAtRef.current = now;
+      showToast?.(message || "No permission", "error");
+    });
+
+    // room presence (who is in the room)
+    s.on("room-members", ({ members }) => {
+      setRoomMembers(Array.isArray(members) ? members : []);
+    });
+
+    s.on("disconnect", (reason) => {
+      if (reason === "io client disconnect") setConnectionState("disconnected");
+      else setConnectionState("reconnecting");
+    });
+
+    s.on("connect_error", () => {
+      setConnectionState("reconnecting");
+    });
+
+    s.on("kicked", ({ reason }) => {
+      showToast?.(reason || "You were removed by host", "error");
+      // Signal to page/UI that we should exit room
+      window.dispatchEvent(new CustomEvent("wb-kicked"));
+    });
+
     setSocket(s);
 
     return () => {
@@ -97,6 +149,11 @@ export function useWhiteboard(roomId) {
       setSocket(null);
       setCursors([]);
       setLocks({});
+      setRoomMembers([]);
+      setConnectionState("disconnected");
+      setRole("VIEWER");
+      setCanEdit(false);
+      setLocked(false);
     };
   }, [roomId, token]);
 
@@ -132,9 +189,15 @@ export function useWhiteboard(roomId) {
       locks,
       cursors,
       myUserId,
-
+      roomMembers,
+      connectionState,
+      role,
+      canEdit,
+      locked,
       // mouseMove: kirim draft
       sendDraftElement: (element) => {
+        if (!canEdit) return;
+
         if (!socket || !emitDraftElementUpdate.current) return;
         emitDraftElementUpdate.current({
           roomId,
@@ -145,6 +208,8 @@ export function useWhiteboard(roomId) {
 
       // mouseUp: kirim final
       sendFinalElement: (element) => {
+        if (!canEdit) return;
+
         if (!socket || !rawEmitElementUpdate.current) return;
         if (emitDraftElementUpdate.current) {
           emitDraftElementUpdate.current.cancel(); // pastikan tidak ada draft mengekor
@@ -158,6 +223,8 @@ export function useWhiteboard(roomId) {
 
       // clear board (opsional flag isFinal di server)
       clearBoard: (isFinal = true) => {
+        if (!canEdit) return;
+
         if (!socket) return;
         socket.emit("whiteboard-clear", { roomId, isFinal });
         if (isFinal) setElements([]);
@@ -171,6 +238,8 @@ export function useWhiteboard(roomId) {
 
       // locking
       lockElement: (elementId) => {
+        if (!canEdit) return;
+
         if (!socket) return;
         socket.emit("element-lock", {
           roomId,
@@ -182,6 +251,8 @@ export function useWhiteboard(roomId) {
         setLocks((prev) => ({ ...prev, [elementId]: myUserId }));
       },
       unlockElement: (elementId) => {
+        if (!canEdit) return;
+
         if (!socket) return;
         socket.emit("element-lock", {
           roomId,
@@ -195,8 +266,28 @@ export function useWhiteboard(roomId) {
           return next;
         });
       },
+      kickUser: (targetUserId) => {
+        if (!socket) return;
+        socket.emit("moderation:kick", { roomId, targetUserId });
+      },
+      setUserRole: (targetUserId, role) => {
+        if (!socket) return;
+        socket.emit("moderation:set-role", { roomId, targetUserId, role });
+      },
     };
-  }, [elements, locks, cursors, myUserId, socket, roomId]);
+  }, [
+    title,
+    roomMembers,
+    elements,
+    locks,
+    cursors,
+    myUserId,
+    socket,
+    roomId,
+    role,
+    canEdit,
+    locked,
+  ]);
 
   return api;
 }

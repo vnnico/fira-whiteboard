@@ -39,13 +39,19 @@ import { useElementSelection } from "../../hooks/useElementSelection";
 const CANVAS_SIZE = 8000;
 const CLIPBOARD_OFFSET = 20;
 
-export default function WhiteboardCanvas({ roomId, onTitleChange }) {
+export default function WhiteboardCanvas({
+  roomId,
+  onTitleChange,
+  onMembersChange,
+  onWhiteboardApi,
+}) {
   const {
     title,
     elements,
     setElements,
     locks,
     cursors,
+    connectionState: wbConnectionState,
     myUserId,
     sendDraftElement,
     sendFinalElement,
@@ -53,7 +59,35 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
     lockElement,
     unlockElement,
     clearBoard,
+    roomMembers,
+    role,
+    canEdit,
+    locked,
+    kickUser,
+    setUserRole,
   } = useWhiteboard(roomId);
+
+  // Lift room presence up to RoomLayout (for avatar list / sidebar)
+  useEffect(() => {
+    if (typeof onMembersChange === "function") {
+      onMembersChange(roomMembers || []);
+    }
+  }, [roomMembers, onMembersChange]);
+
+  useEffect(() => {
+    onWhiteboardApi?.({ kickUser, setUserRole });
+  }, [onWhiteboardApi, kickUser, setUserRole]);
+
+  const wbBlocked = wbConnectionState !== "connected";
+  const editDisabled = wbBlocked || !canEdit;
+  const lastViewOnlyToastRef = useRef(0);
+
+  const notifyViewOnly = () => {
+    const now = Date.now();
+    if (now - lastViewOnlyToastRef.current < 1500) return;
+    lastViewOnlyToastRef.current = now;
+    showToast("View only: you don't have edit access", "error");
+  };
 
   const [collapsed, setCollapsed] = useState(false);
   const [currentTool, setCurrentTool] = useState(ToolTypes.POINTER);
@@ -82,7 +116,6 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
   const [scale, setScale] = useState(1);
   const isClampingRef = useRef(false);
 
-  // ✅ untuk drawing tool
   const drawingIdRef = useRef(null);
 
   const interactionRef = useRef({
@@ -562,6 +595,11 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
   };
 
   const handleMouseDown = (e) => {
+    if (wbBlocked) return;
+    if (!canEdit) {
+      notifyViewOnly();
+      return;
+    }
     const { x, y } = getRelativePos(e);
     interactionRef.current.originX = x;
     interactionRef.current.originY = y;
@@ -1007,6 +1045,7 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
 
   const handleShortcutAction = useCallback(
     (act) => {
+      if (wbBlocked) return;
       switch (act) {
         case "COPY":
           copySelected();
@@ -1040,7 +1079,13 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
           break;
       }
     },
-    [copySelected, pasteFromClipboard, duplicateSelected, deleteSelected]
+    [
+      wbBlocked,
+      copySelected,
+      pasteFromClipboard,
+      duplicateSelected,
+      deleteSelected,
+    ]
   );
   useKeyboardShortcuts(handleShortcutAction);
 
@@ -1124,6 +1169,22 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
         ta?.blur();
       }}
     >
+      {wbBlocked && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/10 backdrop-blur-[1px]">
+          <div className="rounded-xl bg-white px-4 py-2 text-sm text-slate-700 shadow">
+            {wbConnectionState === "reconnecting"
+              ? "Whiteboard reconnecting… Editing is temporarily disabled."
+              : "Whiteboard disconnected. Please wait or refresh."}
+          </div>
+        </div>
+      )}
+
+      {!wbBlocked && !canEdit && (
+        <div className="absolute top-3 left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-100 shadow">
+          View only • {role}
+        </div>
+      )}
+
       <TransformWrapper
         ref={transformRef}
         initialScale={1}
@@ -1333,21 +1394,33 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
 
             <ToolButton
               active={currentTool === ToolTypes.PENCIL}
-              onClick={() => setCurrentTool(ToolTypes.PENCIL)}
+              onClick={() => {
+                if (editDisabled) return notifyViewOnly();
+
+                setCurrentTool(ToolTypes.PENCIL);
+              }}
             >
               ✏️
             </ToolButton>
 
             <ToolButton
               active={currentTool === ToolTypes.RECTANGLE}
-              onClick={() => setCurrentTool(ToolTypes.RECTANGLE)}
+              onClick={() => {
+                if (editDisabled) return notifyViewOnly();
+
+                setCurrentTool(ToolTypes.RECTANGLE);
+              }}
             >
               ▢
             </ToolButton>
 
             <ToolButton
               active={currentTool === ToolTypes.LINE}
-              onClick={() => setCurrentTool(ToolTypes.LINE)}
+              onClick={() => {
+                if (editDisabled) return notifyViewOnly();
+
+                setCurrentTool(ToolTypes.LINE);
+              }}
             >
               ／
             </ToolButton>
@@ -1355,6 +1428,8 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
             <ToolButton
               active={false}
               onClick={() => {
+                if (editDisabled) return notifyViewOnly();
+
                 if (writingElementId) textAreaRef.current?.blur();
                 if (selectedId) {
                   deleteSelected();
@@ -1362,6 +1437,7 @@ export default function WhiteboardCanvas({ roomId, onTitleChange }) {
                 }
 
                 if (confirm("Are you sure to clear whiteboad?")) {
+                  if (wbBlocked) return;
                   setWritingElementId(null);
                   deselect();
                   clearBoard(true);

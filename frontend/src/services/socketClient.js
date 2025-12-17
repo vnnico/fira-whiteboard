@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-const SERVER_URL = "http://localhost:5000";
+const SERVER_URL = "http://localhost:3001";
 
 export function createChatSocket(token) {
   return io(`${SERVER_URL}/chat`, {
@@ -12,6 +12,7 @@ export function createWhiteboardSocket(token) {
   console.log(token);
   return io(`${SERVER_URL}/whiteboard`, {
     auth: { token },
+    transports: ["websocket"],
   });
 }
 

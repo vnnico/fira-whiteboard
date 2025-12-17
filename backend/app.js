@@ -8,12 +8,13 @@ const app = express();
 
 app.use(
   cors({
-    origin: CLIENT_ORIGIN,
+    origin: true,
     credentials: true,
   })
 );
 
 app.use(express.json());
+app.use(cors({ origin: true, credentials: true }));
 
 // API routes
 app.use("/api", routes);
