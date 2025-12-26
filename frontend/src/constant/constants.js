@@ -5,9 +5,11 @@ export const ToolTypes = {
   HAND: "HAND", // pan canvas (nanti)
   PENCIL: "PENCIL",
   RECTANGLE: "RECTANGLE",
+  CIRCLE: "CIRCLE",
+  TRIANGLE: "TRIANGLE",
   LINE: "LINE",
   TEXT: "TEXT",
-  ERASER: "ERASER", // sementara: clear board
+  ERASER: "ERASER",
 };
 
 export const ActionTypes = {
@@ -16,6 +18,7 @@ export const ActionTypes = {
   MOVING: "MOVING",
   RESIZING: "RESIZING",
   WRITING: "WRITING",
+  ERASING: "ERASING",
 };
 
 export const CursorPosition = {

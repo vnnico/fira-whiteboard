@@ -1,4 +1,3 @@
-// whiteboard/utils/drawElement.js
 import rough from "roughjs/bundled/rough.esm.js";
 import { getStroke } from "perfect-freehand";
 import { ToolTypes } from "../constant/constants";
@@ -46,6 +45,7 @@ export function drawElement(ctx, roughCanvas, element, opts = {}) {
     roughCanvas.rectangle(x1, y1, x2 - x1, y2 - y1, {
       stroke: strokeColor,
       strokeWidth: element.strokeWidth ?? 2,
+      fill: element.fill ? element.fill : undefined,
       seed,
     });
     return;
@@ -59,6 +59,60 @@ export function drawElement(ctx, roughCanvas, element, opts = {}) {
       seed,
     });
     return;
+  }
+
+  if (element.type === ToolTypes.CIRCLE) {
+    const x1 = element.x1 ?? 0;
+    const y1 = element.y1 ?? 0;
+    const x2 = element.x2 ?? x1;
+    const y2 = element.y2 ?? y1;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+
+    const signX = dx === 0 ? 1 : Math.sign(dx);
+    const signY = dy === 0 ? 1 : Math.sign(dy);
+
+    const d = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+
+    // x2/y2 hasil normalisasi (square)
+    const nx2 = x1 + signX * d;
+    const ny2 = y1 + signY * d;
+
+    const left = Math.min(x1, nx2);
+    const right = Math.max(x1, nx2);
+    const top = Math.min(y1, ny2);
+    const bottom = Math.max(y1, ny2);
+
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+
+    roughCanvas.circle(cx, cy, d, {
+      stroke: strokeColor,
+      strokeWidth: element.strokeWidth ?? 2,
+      seed,
+      fill: element.fill ? element.fill : undefined,
+    });
+  }
+
+  if (element.type === ToolTypes.TRIANGLE) {
+    const left = Math.min(element.x1, element.x2);
+    const right = Math.max(element.x1, element.x2);
+    const top = Math.min(element.y1, element.y2);
+    const bottom = Math.max(element.y1, element.y2);
+
+    const points = [
+      [(left + right) / 2, top], // top middle
+      [left, bottom],
+      [right, bottom],
+    ];
+
+    roughCanvas.polygon(points, {
+      stroke: element.stroke,
+      strokeWidth: element.strokeWidth,
+      fill: element.fill ? element.fill : undefined,
+      seed: element.seed,
+    });
   }
 
   if (element.type === ToolTypes.PENCIL && element.points?.length) {

@@ -20,7 +20,7 @@ export default function Sidebar({ activeSection = "my", onChangeSection }) {
       className={`
         flex h-screen flex-col border-r border-slate-200 bg-slate-900 text-slate-100
         transition-all duration-200
-        ${collapsed ? "w-14" : "w-64"}
+        ${collapsed ? "w-14" : "w-40 md:w-64"}
       `}
     >
       <div className="flex items-center justify-between px-3 py-4">

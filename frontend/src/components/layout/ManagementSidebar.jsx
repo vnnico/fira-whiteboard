@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { FiX, FiMic, FiMicOff, FiUserMinus } from "react-icons/fi";
+import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
 
 export default function ManagementSidebar({
   isOpen,
@@ -124,19 +125,22 @@ export default function ManagementSidebar({
 }
 
 function ParticipantCard({ participant, myRole, onKick, onSetRole }) {
-  const initial = (participant.name?.charAt(0) || "?").toUpperCase();
+  const initial = getInitials(participant.name, participant.id);
+  const bg = getAvatarColor(participant.id);
   const statusLabel = participant.isInVoice ? "In voice" : "Not in voice";
 
   return (
     <div className="flex items-center justify-between rounded-xl border border-slate-100 p-3 transition-colors hover:bg-slate-50">
       <div className="flex items-center gap-3">
         <div
-          className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ${
-            participant.isSpeaking
-              ? "bg-emerald-500 ring-2 ring-emerald-200"
-              : "bg-slate-400"
-          }`}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-extrabold text-white shadow-sm"
           title={participant.name}
+          style={{
+            background: bg,
+            boxShadow: participant.isSpeaking
+              ? "0 0 0 2px rgba(16,185,129,0.35), 0 6px 18px rgba(0,0,0,0.12)"
+              : "0 6px 18px rgba(0,0,0,0.10)",
+          }}
         >
           {initial}
         </div>

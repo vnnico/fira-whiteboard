@@ -122,6 +122,8 @@ export function getElementAtPosition(elements, x, y) {
       position = positionWithinLine(x, y, el);
     } else if (el.type === ToolTypes.PENCIL) {
       position = positionWithinPencil(x, y, el);
+    } else if (el.type === ToolTypes.CIRCLE || el.type === ToolTypes.TRIANGLE) {
+      position = positionWithinRectangle(x, y, el);
     } else if (el.type === ToolTypes.TEXT) {
       // 1. Pastikan x2/y2 valid (fallback ke x1/y1 jika belum ada)
       const x2 = el.x2 ?? el.x1;

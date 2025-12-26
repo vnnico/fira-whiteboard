@@ -1,14 +1,13 @@
-import React, { useState, useEffect, useRef } from "react";
-import { FiShare2, FiMenu, FiChevronLeft } from "react-icons/fi";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { FiShare2, FiMenu, FiChevronLeft, FiDownload } from "react-icons/fi";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useVoiceState } from "../../hooks/useVoiceState";
 import CommDock from "./CommDock";
 import ManagementSidebar from "./ManagementSidebar";
 import { updateBoardTitle } from "../../services/whiteboardApi";
 import { useToast } from "../../hooks/useToast";
-import { useCallback } from "react";
-import { useMemo } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
 
 export default function RoomLayout({
   children,
@@ -18,49 +17,42 @@ export default function RoomLayout({
   roomMembers = [],
   kickUserFn,
   setUserRoleFn,
+  onExportPngFn,
 }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const voiceState = useVoiceState({ roomId });
-  const { user } = useAuth();
-  const myUserId = user?.id || null;
+  const { isAuthenticated, user } = useAuth();
+  const location = useLocation();
 
   const normId = (v) => (v === null || v === undefined ? "" : String(v));
 
-  const voiceById = useMemo(() => {
-    const map = new Map();
-    for (const p of voiceState?.participants || []) map.set(normId(p.id), p);
-    return map;
-  }, [voiceState?.participants]);
+  const voiceById = new Map(
+    (voiceState?.participants || []).map((p) => [normId(p.id), p])
+  );
 
   const myId = normId(user?.id);
 
-  const participantsForUI = useMemo(() => {
-    if (Array.isArray(roomMembers) && roomMembers.length > 0) {
-      return roomMembers.map((m) => {
-        const mid = normId(m.id);
-        const vp = voiceById.get(mid);
+  const participantsForUI =
+    Array.isArray(roomMembers) && roomMembers.length > 0
+      ? roomMembers.map((m) => {
+          const mid = normId(m.id);
+          const vp = voiceById.get(mid);
 
-        return {
-          id: mid,
-          name: m.username || m.name || mid,
-          isMe: myId ? mid === myId : false,
-          isInVoice: !!vp,
-          isMuted: vp ? !!vp.isMuted : true,
-          isSpeaking: vp ? !!vp.isSpeaking : false,
-          role: m.role,
-        };
-      });
-    }
-
-    // fallback kalau roomMembers belum ada
-    return (voiceState?.participants || []).map((p) => ({
-      ...p,
-      id: normId(p.id),
-      isInVoice: true,
-    }));
-  }, [roomMembers, voiceById, voiceState?.participants, myId]);
-
-  // const inVoiceCount = voiceState?.participants?.length || 0;
+          return {
+            id: mid,
+            name: m.username || m.name || mid,
+            isMe: myId ? mid === myId : false,
+            isInVoice: !!vp,
+            isMuted: vp ? !!vp.isMuted : true,
+            isSpeaking: vp ? !!vp.isSpeaking : false,
+            role: m.role,
+          };
+        })
+      : (voiceState?.participants || []).map((p) => ({
+          ...p,
+          id: normId(p.id),
+          isInVoice: true,
+        }));
 
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -69,30 +61,73 @@ export default function RoomLayout({
   const [isSaving, setIsSaving] = useState(false);
   const inputRef = useRef(null);
 
+  const prevParticipantsRef = useRef(new Map());
+
   const myRole = participantsForUI.find((p) => p.isMe)?.role || "VIEWER";
+  const prevMyRoleRef = useRef(myRole);
 
   const audioUnlockOnceRef = useRef(false);
 
-  const handleAnyUserGesture = useCallback(async () => {
-    // hanya relevan kalau memang perlu unlock audio
-    if (!voiceState?.needsAudioStart) return;
+  const { needsAudioStart, startAudioPlayback, leaveVoice } = voiceState;
+
+  const handleAnyUserGesture = async () => {
+    if (!needsAudioStart) return;
     if (audioUnlockOnceRef.current) return;
 
     audioUnlockOnceRef.current = true;
     try {
-      await voiceState.startAudioPlayback?.();
+      await startAudioPlayback?.();
     } finally {
-      // kalau masih blocked, izinkan user coba lagi dengan klik berikutnya
-      // (misalnya kalau browser menolak gesture tertentu)
-      if (voiceState.needsAudioStart) {
-        audioUnlockOnceRef.current = false;
-      }
+      if (needsAudioStart) audioUnlockOnceRef.current = false;
     }
-  }, [voiceState]);
+  };
 
   useEffect(() => {
     setLocalTitle(title || "Untitled");
   }, [title]);
+
+  useEffect(() => {
+    let prev = prevParticipantsRef.current;
+    let next = new Map();
+
+    for (let i = 0; i < participantsForUI.length; i++) {
+      let p = participantsForUI[i];
+      next.set(String(p.id), p);
+    }
+
+    if (prev.size === 0) {
+      prevParticipantsRef.current = next;
+      return;
+    }
+
+    next.forEach((p, id) => {
+      if (!prev.has(id)) {
+        showToast(p.name + " joined", "info");
+      }
+    });
+
+    // Leave = ada di prev tapi tidak ada di next
+    prev.forEach((p, id) => {
+      if (!next.has(id)) {
+        showToast(p.name + " left", "info");
+      }
+    });
+
+    prevParticipantsRef.current = next;
+  }, [participantsForUI, showToast]);
+
+  useEffect(() => {
+    let prevRole = prevMyRoleRef.current;
+    if (prevRole === myRole) return;
+
+    if (myRole === "EDITOR") {
+      showToast("You are now an editor", "info");
+    } else if (myRole === "VIEWER") {
+      showToast("You are now a viewer", "info");
+    }
+
+    prevMyRoleRef.current = myRole;
+  }, [myRole, showToast]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -105,7 +140,7 @@ export default function RoomLayout({
     const onKicked = async () => {
       try {
         // leave voice if connected
-        await voiceState?.leave?.();
+        await voiceState?.leaveVoice?.();
       } catch (_) {
         // ignore
       } finally {
@@ -115,7 +150,7 @@ export default function RoomLayout({
 
     window.addEventListener("wb-kicked", onKicked);
     return () => window.removeEventListener("wb-kicked", onKicked);
-  }, [voiceState, navigate]);
+  }, [leaveVoice, navigate]);
 
   const handleTitleSubmit = async (e) => {
     e?.preventDefault();
@@ -169,22 +204,31 @@ export default function RoomLayout({
       <header className="pointer-events-none absolute left-0 right-0 top-0 z-10 flex items-center justify-between p-4">
         <div className="pointer-events-auto flex items-center gap-2 rounded-xl bg-white/90 p-1.5 shadow-sm backdrop-blur-sm ring-1 ring-slate-900/5 transition-all hover:bg-white">
           <button
-            onClick={() => navigate("/")}
+            onClick={() => {
+              if (!isAuthenticated) {
+                navigate("/login", { state: { from: location } });
+                return;
+              }
+              navigate("/");
+            }}
             className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 text-slate-600"
           >
             <FiChevronLeft className="h-5 w-5" />
           </button>
           <div className="h-4 w-px bg-slate-200" />
-          <div className="px-2">
+          <div className="flex min-w-0 items-center gap-2 px-3">
             {isEditing ? (
-              <form onSubmit={handleTitleSubmit}>
+              <form onSubmit={handleTitleSubmit} className="min-w-0">
                 <input
                   ref={inputRef}
                   value={localTitle}
                   onChange={(e) => setLocalTitle(e.target.value)}
                   onBlur={handleTitleSubmit}
                   disabled={isSaving}
-                  className="w-[150px] rounded-md border border-emerald-500 bg-white px-1 py-0.5 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-200 md:w-[200px]"
+                  className=" w-[180px] md:w-[320px] max-w-[60vw]
+            rounded-md border border-emerald-500 bg-white px-2 py-1
+            text-sm font-semibold text-slate-900 outline-none
+            focus:ring-2 focus:ring-emerald-200"
                 />
               </form>
             ) : (
@@ -196,6 +240,17 @@ export default function RoomLayout({
                 {localTitle}
               </button>
             )}
+            <div className="my-2 w-px bg-slate-200" />
+
+            {/* Export button */}
+            <button
+              onClick={() => onExportPngFn?.()}
+              disabled={!onExportPngFn}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              title="Export PNG"
+            >
+              <FiDownload className="h-5 w-5" />
+            </button>
           </div>
         </div>
 
@@ -209,24 +264,35 @@ export default function RoomLayout({
               <div className="h-8 w-8 rounded-full bg-slate-200 ring-2 ring-white" />
             ) : (
               topAvatars.map((p) => {
-                const initials = (p.name || "?")
-                  .split(" ")
-                  .slice(0, 2)
-                  .map((s) => s[0]?.toUpperCase())
-                  .join("");
+                const bg = getAvatarColor(p.id);
+                const initials = getInitials(p.name, p.id);
 
                 return (
                   <div
                     key={p.id}
-                    className={`h-8 w-8 rounded-full ring-2 ring-white grid place-items-center text-xs font-bold ${
-                      p.isSpeaking ? "bg-emerald-400" : "bg-slate-300"
-                    }`}
+                    className="h-8 w-8 rounded-full ring-2 ring-white grid place-items-center text-[11px] font-extrabold text-white shadow-sm"
                     title={p.name}
+                    style={{
+                      background: bg,
+
+                      boxShadow: p.isSpeaking
+                        ? "0 0 0 2px rgba(16,185,129,0.35), 0 6px 18px rgba(0,0,0,0.12)"
+                        : "0 6px 18px rgba(0,0,0,0.10)",
+                    }}
                   >
                     {initials}
                   </div>
                 );
               })
+            )}
+
+            {participantsForUI.length > topAvatars.length && (
+              <div
+                className="h-8 w-8 rounded-full ring-2 ring-white grid place-items-center text-[11px] font-extrabold text-slate-700 bg-slate-200 shadow-sm"
+                title={`${participantsForUI.length - topAvatars.length} more`}
+              >
+                +{participantsForUI.length - topAvatars.length}
+              </div>
             )}
           </div>
           <button

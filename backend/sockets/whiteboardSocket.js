@@ -7,13 +7,57 @@ import {
   ensureRoleForUser,
   getPermissionsForUser,
   setUserRole,
+  removeMemberAndRole,
 } from "../models/whiteboardStore.js";
 
 // In-memory room presence tracking.
 // This lets us show "who is in the room" even if they never join voice.
 // roomId -> userId -> { id, username, sockets: Set<socketId> }
 const presenceByRoom = new Map();
+const locksByRoom = new Map();
 
+function getRoomLocks(roomId) {
+  if (!locksByRoom.has(roomId)) {
+    locksByRoom.set(roomId, new Map());
+  }
+  return locksByRoom.get(roomId);
+}
+
+function getLocksSnapshot(roomId) {
+  const m = locksByRoom.get(roomId);
+  if (!m) return {};
+  const out = {};
+  for (const [elementId, userId] of m.entries()) {
+    out[elementId] = String(userId);
+  }
+  return out;
+}
+
+function releaseAllLocksForUser(io, roomId, userId) {
+  if (!roomId || userId === null || userId === undefined) return;
+  const uid = String(userId);
+
+  const roomLocks = locksByRoom.get(roomId);
+  if (!roomLocks || roomLocks.size === 0) return;
+
+  let changed = false;
+  for (const [elementId, owner] of roomLocks.entries()) {
+    if (String(owner) === uid) {
+      roomLocks.delete(elementId);
+      changed = true;
+
+      io.to(roomId).emit("element-lock", {
+        elementId,
+        userId: uid,
+        locked: false,
+      });
+    }
+  }
+
+  if (changed && roomLocks.size === 0) {
+    locksByRoom.delete(roomId);
+  }
+}
 function getSocketById(io, sid) {
   // Namespace: io.sockets is a Map
   if (io?.sockets && typeof io.sockets.get === "function") {
@@ -68,11 +112,15 @@ function removePresence(roomId, userId, socketId) {
   existing.sockets.delete(socketId);
   if (existing.sockets.size === 0) {
     roomPresence.delete(key);
+
+    if (roomPresence.size === 0) {
+      presenceByRoom.delete(roomId);
+    }
+
+    return true; // user fully removed
   }
 
-  if (roomPresence.size === 0) {
-    presenceByRoom.delete(roomId);
-  }
+  return false; // user masih punya socket lain
 }
 
 function emitRoomMembers(io, roomId) {
@@ -99,6 +147,9 @@ function kickUserFromRoom(io, roomId, targetUserId, byUser) {
   const target = roomPresence.get(String(targetUserId));
   if (!target) return false;
 
+  // Release any element locks held by the target user before disconnecting.
+  releaseAllLocksForUser(io, roomId, String(targetUserId));
+
   // Emit kicked ke semua socket milik user tsb, lalu disconnect
   for (const sid of target.sockets || []) {
     const s = getSocketById(io, sid);
@@ -114,9 +165,11 @@ function kickUserFromRoom(io, roomId, targetUserId, byUser) {
   }
 
   // Bersihkan presence map
-  roomPresence.delete(targetUserId);
+  roomPresence.delete(String(targetUserId));
   if (roomPresence.size === 0) presenceByRoom.delete(roomId);
 
+  // Cleanup role
+  removeMemberAndRole(roomId, String(targetUserId));
   // Broadcast member list update
   emitRoomMembers(io, roomId);
   return true;
@@ -184,11 +237,13 @@ export function registerWhiteboardHandlers(io, socket) {
     }
 
     const board = getBoardById(roomId);
+    const locks = getLocksSnapshot(roomId);
 
     // Kirim elements + title
     socket.emit("whiteboard-state", {
       elements: board?.elements || [],
       title: board?.title || "Untitled Whiteboard",
+      locks,
     });
   });
 
@@ -239,25 +294,83 @@ export function registerWhiteboardHandlers(io, socket) {
     socket.to(resolvedRoomId).emit("cursor-position", {
       x,
       y,
-      userId: socket.id,
+      userId: String(socket.user?.id ?? socket.data?.userId ?? socket.id),
+      username: socket.user?.username || "Unknown",
     });
   });
 
-  socket.on("element-lock", ({ roomId, elementId, userId, locked }) => {
+  socket.on("element-lock", (payload, ack) => {
+    const { roomId, elementId, locked } = payload || {};
     const resolvedRoomId = getRoomId(roomId);
-    if (!resolvedRoomId || !elementId) return;
+    if (!resolvedRoomId || !elementId) {
+      if (typeof ack === "function") ack({ ok: false, reason: "bad-request" });
+      return;
+    }
 
     const perms = getPermissionsForUser(resolvedRoomId, socket.user?.id);
     if (!perms.canEdit) {
       emitPermissionDenied("element-lock", "View-only mode");
+      if (typeof ack === "function")
+        ack({ ok: false, reason: "no-permission" });
       return;
     }
 
-    socket.to(resolvedRoomId).emit("element-lock", {
+    const requesterId = String(socket.user?.id ?? socket.data?.userId ?? "");
+    const roomLocks = getRoomLocks(resolvedRoomId);
+    const currentOwner = roomLocks.get(String(elementId));
+
+    // Acquire lock
+    if (locked) {
+      if (currentOwner && String(currentOwner) !== requesterId) {
+        // Someone else already owns it. Sync requester to the current owner.
+        socket.emit("element-lock", {
+          elementId,
+          userId: String(currentOwner),
+          locked: true,
+        });
+        if (typeof ack === "function") {
+          ack({ ok: false, reason: "locked", owner: String(currentOwner) });
+        }
+        return;
+      }
+
+      roomLocks.set(String(elementId), requesterId);
+      io.to(resolvedRoomId).emit("element-lock", {
+        elementId,
+        userId: requesterId,
+        locked: true,
+      });
+      if (typeof ack === "function") ack({ ok: true, owner: requesterId });
+      return;
+    }
+
+    // Release lock
+    if (!currentOwner) {
+      if (typeof ack === "function") ack({ ok: true, owner: null });
+      return;
+    }
+
+    if (String(currentOwner) !== requesterId) {
+      socket.emit("element-lock", {
+        elementId,
+        userId: String(currentOwner),
+        locked: true,
+      });
+      if (typeof ack === "function") {
+        ack({ ok: false, reason: "not-owner", owner: String(currentOwner) });
+      }
+      return;
+    }
+
+    roomLocks.delete(String(elementId));
+    if (roomLocks.size === 0) locksByRoom.delete(resolvedRoomId);
+
+    io.to(resolvedRoomId).emit("element-lock", {
       elementId,
-      userId,
-      locked: !!locked,
+      userId: requesterId,
+      locked: false,
     });
+    if (typeof ack === "function") ack({ ok: true, owner: null });
   });
 
   socket.on("moderation:kick", ({ roomId, targetUserId }) => {
@@ -342,13 +455,29 @@ export function registerWhiteboardHandlers(io, socket) {
     const roomId = getRoomId();
     if (!roomId) return;
 
-    // Update room presence list
-    const userId = socket.data?.userId;
+    // Release any element locks held by this user in the room.
+    const userId = socket.data?.userId ?? socket.user?.id;
     if (userId) {
-      removePresence(roomId, userId, socket.id);
+      releaseAllLocksForUser(io, roomId, userId);
+    }
+
+    // Update room presence list
+    const presenceUserId = socket.data?.userId;
+    if (presenceUserId) {
+      const fullyLeft = removePresence(roomId, presenceUserId, socket.id);
+
+      // Cleanup role & membership HANYA kalau user benar-benar keluar (socket terakhir)
+      if (fullyLeft) {
+        removeMemberAndRole(roomId, presenceUserId);
+      }
+
       emitRoomMembers(io, roomId);
     }
 
-    io.to(roomId).emit("user-disconnected", { userId: socket.id });
+    // Use app userId for lock cleanup on clients; also include socketId for compatibility.
+    io.to(roomId).emit("user-disconnected", {
+      userId: String(userId ?? socket.id),
+      socketId: socket.id,
+    });
   });
 }

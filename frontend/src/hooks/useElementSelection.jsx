@@ -12,7 +12,11 @@ export function useElementSelection({
   unlockElement,
 }) {
   const isLockedByOther = useCallback(
-    (id) => !!(locks?.[id] && locks[id] !== myUserId),
+    (id) => {
+      if (!id) return false;
+      const owner = locks?.[id];
+      return !!owner && owner !== myUserId;
+    },
     [locks, myUserId]
   );
 
@@ -55,10 +59,7 @@ export function useElementSelection({
       // kalau switch selection, unlock yang lama (kalau milik kita)
       if (selectedId && selectedId !== id) unlockIfOwned(selectedId);
 
-      // kalau dikunci user lain, kita boleh highlight tapi tidak interaktif
       if (isLockedByOther(id)) {
-        setSelectedId(id);
-        setSelectedPosition(position);
         setAction(ActionTypes.NONE);
         return { interactive: false };
       }
@@ -83,5 +84,5 @@ export function useElementSelection({
     ]
   );
 
-  return { select, deselect, unlockIfOwned, isLockedByOther };
+  return { select, deselect, isLockedByOther };
 }

@@ -23,6 +23,41 @@ export function getElementBounds(el) {
   return { x1, y1, x2, y2 };
 }
 
+function drawLockBadge(ctx, left, top, label) {
+  const text = label && String(label).trim() ? String(label).trim() : "Locked";
+
+  ctx.save();
+  ctx.font = "12px sans-serif";
+
+  const paddingX = 6;
+  const paddingY = 3;
+  const metrics = ctx.measureText(text);
+  const w = Math.ceil(metrics.width + paddingX * 2);
+  const h = 18;
+
+  // posisi di atas kiri box (jangan sampai minus)
+  let x = left;
+  let y = top - (h + 6);
+  if (y < 2) y = 2;
+
+  ctx.fillStyle = "rgba(239,68,68,0.95)";
+  ctx.beginPath();
+  const r = 8;
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "white";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + paddingX, y + h / 2);
+
+  ctx.restore();
+}
+
 function drawSelectionBox(ctx, el, { color, showHandles }) {
   const { x1, y1, x2, y2 } = getElementBounds(el);
   const left = Math.min(x1, x2);
@@ -37,12 +72,14 @@ function drawSelectionBox(ctx, el, { color, showHandles }) {
   ctx.strokeRect(left, top, right - left, bottom - top);
   ctx.setLineDash([]);
 
-  // handles hanya untuk element yang memang kamu resize sekarang
   if (
     showHandles &&
     (el.type === ToolTypes.RECTANGLE ||
       el.type === ToolTypes.LINE ||
-      el.type === ToolTypes.PENCIL)
+      el.type === ToolTypes.CIRCLE ||
+      el.type === ToolTypes.TRIANGLE ||
+      el.type === ToolTypes.PENCIL ||
+      el.type === ToolTypes.TEXT)
   ) {
     const s = 8;
     const hs = s / 2;
@@ -70,7 +107,7 @@ function drawSelectionBox(ctx, el, { color, showHandles }) {
 
 export function drawSelectionOverlay(
   ctx,
-  { elements, selectedId, locks, myUserId }
+  { elements, selectedId, locks, myUserId, userNameById }
 ) {
   if (!ctx) return;
 
@@ -80,11 +117,26 @@ export function drawSelectionOverlay(
     if (owner === myUserId) continue;
 
     const el = elements.find((e) => e?.id === id);
-    if (el)
-      drawSelectionBox(ctx, el, {
-        color: "rgba(148,163,184,0.95)",
-        showHandles: false,
-      });
+    if (!el) continue;
+
+    drawSelectionBox(ctx, el, {
+      color: "rgba(239,68,68,0.95)",
+      showHandles: false,
+    });
+
+    const b = getElementBounds(el);
+    const left = Math.min(b.x1, b.x2);
+    const top = Math.min(b.y1, b.y2);
+
+    const name =
+      userNameById && userNameById[String(owner)]
+        ? userNameById[String(owner)]
+        : null;
+
+    const shortName = name
+      ? String(name).split(" ").slice(0, 2).join(" ")
+      : "Someone";
+    drawLockBadge(ctx, left, top, "Locked by " + shortName);
   }
 
   // Local selected

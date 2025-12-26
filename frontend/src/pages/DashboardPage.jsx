@@ -1,19 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar from "../components/layout/Sidebar";
 import Topbar from "../components/layout/Topbar";
 import WhiteboardCardSkeleton from "../components/dashboard/WhiteboardCardSkeleton";
 import { useToast } from "../hooks/useToast";
 import { createWhiteboard, getWhiteboards } from "../services/whiteboardApi";
 import { useNavigate } from "react-router-dom";
+import LoadingModal from "../components/ui/LoadingModal";
+import { formatDateTime } from "../utils/formatDateTime";
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [myBoards, setMyBoards] = useState([]);
   const [joinedBoards, setJoinedBoards] = useState([]);
   const [activeSection, setActiveSection] = useState("my");
+  const [creating, setCreating] = useState(false);
 
   const navigate = useNavigate();
   const { showToast } = useToast();
+
+  // Avoid setting state after unmount (e.g., navigate away mid-request)
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Initially fetch and load list of my and joined whiteboards
   useEffect(() => {
@@ -33,17 +44,17 @@ export default function DashboardPage() {
   }, [showToast]);
 
   const handleCreate = async () => {
-    try {
-      // TODO:
-      // Tambahin loading section
-      // Tambahin kunci create button biar ga double.
-      // ...
+    // Prevent double submit
+    if (creating) return;
 
+    try {
+      setCreating(true);
       const { roomId } = await createWhiteboard();
       showToast("New whiteboard created", "success");
       navigate(`/board/${roomId}`);
     } catch (err) {
       showToast("Failed to create whiteboard", "error");
+      if (isMountedRef.current) setCreating(false);
     }
   };
 
@@ -53,6 +64,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen bg-slate-50">
+      <LoadingModal open={creating} title="Creating Whiteboard..." />
       <Sidebar
         activeSection={activeSection}
         onChangeSection={setActiveSection}
@@ -100,7 +112,7 @@ export default function DashboardPage() {
                               {board.title}
                             </div>
                             <div className="text-[11px] text-slate-500">
-                              {board.createdAt}
+                              {formatDateTime(board.createdAt)}
                             </div>
                           </div>
                           <div className="text-slate-400">•••</div>

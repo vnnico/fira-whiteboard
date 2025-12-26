@@ -42,6 +42,8 @@ export async function createBoard({ createdBy }) {
   const roomId = randomUUID();
   const ownerId = createdBy ? String(createdBy) : null;
 
+  await sleep(5000);
+
   console.log("Creating board...");
   const board = {
     roomId,
@@ -95,6 +97,29 @@ export function addMember(roomId, userId) {
   console.log("*******");
   return board;
 }
+
+export function removeMemberAndRole(roomId, userId) {
+  const board = ensureBoard(roomId);
+  if (!userId) return board;
+
+  const uid = String(userId);
+
+  // Jangan hapus OWNER (createdBy)
+  if (board.createdBy && String(board.createdBy) === uid) {
+    return board;
+  }
+
+  // Hapus dari members
+  board.members = (board.members || []).filter((m) => String(m) !== uid);
+
+  // Hapus role agar reset ke default saat join lagi
+  if (board.roles && board.roles[uid]) {
+    delete board.roles[uid];
+  }
+
+  return board;
+}
+
 /**
  * Pastikan user punya role di board:
  * - createdBy => OWNER

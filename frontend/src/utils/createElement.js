@@ -1,12 +1,23 @@
-// whiteboard/utils/createElement.js
 import { ToolTypes } from "../constant/constants";
 
-export function createElement({ id, type, x1, y1, x2, y2, text }) {
+export function createElement({
+  id,
+  type,
+  x1,
+  y1,
+  x2,
+  y2,
+  text,
+  stroke,
+  strokeWidth,
+  fill,
+}) {
   const base = {
     id,
     type,
-    stroke: "#111827", // slate-900
-    strokeWidth: 2,
+    stroke: stroke || "#111827", // slate-900
+    strokeWidth: typeof strokeWidth === "number" ? strokeWidth : 2,
+    fill: fill || "",
     seed: Math.floor(Math.random() * 2 ** 31), // untuk roughJS konsisten
   };
 
@@ -18,12 +29,6 @@ export function createElement({ id, type, x1, y1, x2, y2, text }) {
   }
 
   if (type === ToolTypes.TEXT) {
-    // return {
-    //   ...base,
-    //   x1,
-    //   y1,
-    //   text: text ?? "",
-    // };
     return {
       id,
       type,
@@ -33,6 +38,9 @@ export function createElement({ id, type, x1, y1, x2, y2, text }) {
       x2,
       y2,
       text: text ?? "",
+      stroke: base.stroke,
+      strokeWidth: base.strokeWidth,
+      seed: base.seed,
     };
   }
 

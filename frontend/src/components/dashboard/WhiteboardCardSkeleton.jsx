@@ -1,4 +1,3 @@
-import React from "react";
 import Skeleton from "../ui/Skeleton";
 
 export default function WhiteboardCardSkeleton() {

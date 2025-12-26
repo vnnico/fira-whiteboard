@@ -14,7 +14,6 @@ app.use(
 );
 
 app.use(express.json());
-app.use(cors({ origin: true, credentials: true }));
 
 // API routes
 app.use("/api", routes);

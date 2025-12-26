@@ -1,12 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { WhiteboardShell } from "./WhiteboardShell";
-import {
-  FiChevronLeft,
-  FiChevronRight,
-  FiMic,
-  FiMessageSquare,
-} from "react-icons/fi";
-
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
+import { GrDuplicate } from "react-icons/gr";
+import { FaRegCopy } from "react-icons/fa6";
+import { RiDeleteBin6Line } from "react-icons/ri";
 import { useWhiteboard } from "../../hooks/useWhiteboard";
 import {
   ToolTypes,
@@ -35,9 +31,67 @@ import {
 } from "../../utils/drawSelectionOverlay";
 import { getSelectionHitPosition } from "../../utils/getSelectionHitPosition";
 import { useElementSelection } from "../../hooks/useElementSelection";
+import LoadingModal from "../ui/LoadingModal";
 
 const CANVAS_SIZE = 8000;
 const CLIPBOARD_OFFSET = 20;
+const LOCK_IDLE_TIMEOUT_MS = 10 * 1000;
+
+const STROKE_COLORS = [
+  "#111827", // slate-900
+  "#ef4444", // red
+  "#f59e0b", // amber
+  "#10b981", // emerald
+  "#3b82f6", // blue
+  "#8b5cf6", // violet
+  "#ec4899", // pink
+  "#64748b", // slate
+];
+
+const STROKE_WIDTHS = [2, 4, 8];
+
+const genSeed = () => {
+  return Math.floor(Math.random() * 2 ** 31);
+};
+
+// Deep copy element: avoid copy by reference.
+// Ideally we'll be using function of `structuredClone()`, but we also handle fallback mechanism if the function is not provided in user's browser
+const deepCloneElement = (el) => {
+  if (!el) return null;
+
+  // structuredClone aman untuk object/array (browser modern)
+  if (typeof structuredClone === "function") return structuredClone(el);
+
+  // fallback manual (cukup untuk shape)
+  const cloned = { ...el };
+  if (el.points) cloned.points = el.points.map((p) => ({ ...p }));
+  if (el.base && typeof el.base === "object") cloned.base = { ...el.base };
+  return cloned;
+};
+
+const isShapeTool = (t) => {
+  return (
+    t === ToolTypes.RECTANGLE ||
+    t === ToolTypes.CIRCLE ||
+    t === ToolTypes.TRIANGLE ||
+    t === ToolTypes.LINE
+  );
+};
+
+const getShapeIcon = (t) => {
+  if (t === ToolTypes.CIRCLE) return "○";
+  if (t === ToolTypes.TRIANGLE) return "△";
+  if (t === ToolTypes.LINE) return "／";
+  return "▢"; // default rectangle
+};
+
+const isFillableTool = (t) => {
+  return (
+    t === ToolTypes.RECTANGLE ||
+    t === ToolTypes.CIRCLE ||
+    t === ToolTypes.TRIANGLE
+  );
+};
 
 export default function WhiteboardCanvas({
   roomId,
@@ -45,6 +99,53 @@ export default function WhiteboardCanvas({
   onMembersChange,
   onWhiteboardApi,
 }) {
+  const navigate = useNavigate();
+
+  // Boundary DOM state
+  const containerRef = useRef(null);
+  // Transform wrapper state, belongs to react-pinch-pan-zoom
+  const transformRef = useRef(null);
+  // Canvas state
+  const canvasRef = useRef(null);
+  // Text area state
+  const textAreaRef = useRef(null);
+
+  const { showToast } = useToast();
+  // Drawing activity utility
+  const drawingIdRef = useRef(null);
+  const textOriginalRef = useRef(null);
+  const erasedIdsRef = useRef(new Set());
+  const lastStyleSyncIdRef = useRef(null);
+
+  // Color state
+  const [strokeColor, setStrokeColor] = useState("#111827");
+  const [strokeWidth, setStrokeWidth] = useState(2);
+  const [fillColor, setFillColor] = useState("");
+
+  // UI states
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
+  const [styleOpen, setStyleOpen] = useState(false);
+
+  // Snapshot for moving/resizing
+  const interactionRef = useRef({
+    originX: 0,
+    originY: 0,
+    originalElement: null,
+  });
+
+  const isClampingRef = useRef(false);
+  const lastLockActivityAtRef = useRef(0);
+  const markLockActivity = () => {
+    lastLockActivityAtRef.current = Date.now();
+  };
+
+  //  Copy / Paste / Duplicate (internal clipboard per-tab & per-room)
+  // Clipboard disimpan di memory (useRef) => otomatis tidak bisa lintas tab.
+  // Kita juga simpan roomId supaya tidak bisa paste lintas room.
+  const clipboardRef = useRef(null);
+  const lastMousePosRef = useRef({ x: 0, y: 0 });
+
+  // Whiteboard data source
   const {
     title,
     elements,
@@ -67,83 +168,286 @@ export default function WhiteboardCanvas({
     setUserRole,
   } = useWhiteboard(roomId);
 
-  // Lift room presence up to RoomLayout (for avatar list / sidebar)
-  useEffect(() => {
-    if (typeof onMembersChange === "function") {
-      onMembersChange(roomMembers || []);
-    }
-  }, [roomMembers, onMembersChange]);
-
-  useEffect(() => {
-    onWhiteboardApi?.({ kickUser, setUserRole });
-  }, [onWhiteboardApi, kickUser, setUserRole]);
-
   const wbBlocked = wbConnectionState !== "connected";
   const editDisabled = wbBlocked || !canEdit;
-  const lastViewOnlyToastRef = useRef(0);
 
-  const notifyViewOnly = () => {
-    const now = Date.now();
-    if (now - lastViewOnlyToastRef.current < 1500) return;
-    lastViewOnlyToastRef.current = now;
-    showToast("View only: you don't have edit access", "error");
-  };
-
+  // Default screen scale
+  const [scale, setScale] = useState(1);
+  // Participant and message menu
   const [collapsed, setCollapsed] = useState(false);
+
+  // Tool and action
   const [currentTool, setCurrentTool] = useState(ToolTypes.POINTER);
   const [action, setAction] = useState(ActionTypes.NONE);
-
   const [selectedId, setSelectedId] = useState(null);
   const [selectedPosition, setSelectedPosition] = useState(
     CursorPosition.OUTSIDE
   );
-
   const [textDraft, setTextDraft] = useState("");
-  const textOriginalRef = useRef(null);
-  const [isTextFocused, setIsTextFocused] = useState(false);
-
-  const { showToast } = useToast();
-  const navigate = useNavigate();
-
-  const transformRef = useRef(null);
-
   const [writingElementId, setWritingElementId] = useState(null);
-  const textAreaRef = useRef(null);
 
-  const containerRef = useRef(null);
-  const canvasRef = useRef(null);
+  const exportPng = useCallback(() => {
+    // kalau sedang edit text, commit dulu agar hasil export final
+    if (writingElementId) {
+      textAreaRef.current?.blur();
+    }
 
-  const [scale, setScale] = useState(1);
-  const isClampingRef = useRef(false);
+    const els = (elements || []).filter((el) => el && !el.isDeleted);
+    if (els.length === 0) {
+      showToast?.("Nothing to export", "info");
+      return;
+    }
 
-  const drawingIdRef = useRef(null);
+    // cari bounding box keseluruhan
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
 
-  const interactionRef = useRef({
-    originX: 0,
-    originY: 0,
-    originalElement: null,
+    for (const el of els) {
+      const b = getElementBounds(el);
+      const left = Math.min(b.x1, b.x2);
+      const right = Math.max(b.x1, b.x2);
+      const top = Math.min(b.y1, b.y2);
+      const bottom = Math.max(b.y1, b.y2);
+
+      if (left < minX) minX = left;
+      if (top < minY) minY = top;
+      if (right > maxX) maxX = right;
+      if (bottom > maxY) maxY = bottom;
+    }
+
+    const PAD = 30;
+    minX = Math.max(0, Math.floor(minX - PAD));
+    minY = Math.max(0, Math.floor(minY - PAD));
+    maxX = Math.min(CANVAS_SIZE, Math.ceil(maxX + PAD));
+    maxY = Math.min(CANVAS_SIZE, Math.ceil(maxY + PAD));
+
+    const w = Math.max(1, maxX - minX);
+    const h = Math.max(1, maxY - minY);
+
+    const off = document.createElement("canvas");
+    off.width = w;
+    off.height = h;
+
+    const ctx = off.getContext("2d");
+    if (!ctx) return;
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+
+    // geser origin agar crop pas
+    ctx.save();
+    ctx.translate(-minX, -minY);
+
+    // render elemen tanpa lock overlay (pakai locks kosong)
+    drawElements(ctx, els, {}, myUserId);
+
+    ctx.restore();
+
+    const url = off.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `whiteboard-${roomId || "export"}.png`;
+    a.click();
+
+    showToast?.("Exported PNG", "success");
+  }, [writingElementId, elements, myUserId, roomId, showToast]);
+  // Lift room presence up to RoomLayout (for avatar list / sidebar)
+  useEffect(() => {
+    if (typeof onMembersChange === "function")
+      onMembersChange(roomMembers || []);
+  }, [roomMembers, onMembersChange]);
+
+  useEffect(() => {
+    onWhiteboardApi?.({ kickUser, setUserRole, exportPng });
+  }, [onWhiteboardApi, kickUser, setUserRole, exportPng]);
+
+  // Filter all active elements (remove soft delete one)
+  const elementsActive = useMemo(() => {
+    return elements.filter((el) => el && !el.isDeleted);
+  }, [elements]);
+  // Special case if currently in writing, then hide only the edited element
+  const elementsToRender = useMemo(() => {
+    if (!writingElementId) return elementsActive;
+    return elementsActive.filter((el) => el?.id !== writingElementId);
+  }, [elementsActive, writingElementId]);
+
+  const writingElement = writingElementId
+    ? elements.find((el) => el.id === writingElementId)
+    : null;
+
+  const userNameById = useMemo(() => {
+    const map = {};
+    (roomMembers || []).forEach((m) => {
+      const id = String(m.id);
+      map[id] = m.username || m.name || id;
+    });
+    return map;
+  }, [roomMembers]);
+
+  // Selection/locking helper
+  const { select, deselect, isLockedByOther } = useElementSelection({
+    selectedId,
+    setSelectedId,
+    setSelectedPosition,
+    setAction,
+    locks,
+    myUserId,
+    lockElement,
+    unlockElement,
   });
 
-  //  Copy / Paste / Duplicate (internal clipboard per-tab & per-room)
-  // Clipboard disimpan di memory (useRef) => otomatis tidak bisa lintas tab.
-  // Kita juga simpan roomId supaya tidak bisa paste lintas room.
-  const clipboardRef = useRef(null);
-  const lastMousePosRef = useRef({ x: 0, y: 0 });
+  const isFillableType = (t) => {
+    return (
+      t === ToolTypes.RECTANGLE ||
+      t === ToolTypes.CIRCLE ||
+      t === ToolTypes.TRIANGLE
+    );
+  };
 
-  const genSeed = useCallback(() => Math.floor(Math.random() * 2 ** 31), []);
+  const applyStyleToSelected = useCallback(
+    (patch) => {
+      if (!selectedId) return;
 
-  const deepCloneElement = useCallback((el) => {
-    if (!el) return null;
+      // jangan ubah style saat sedang edit text (textarea)
+      if (writingElementId) return;
 
-    // structuredClone aman untuk object/array (browser modern)
-    if (typeof structuredClone === "function") return structuredClone(el);
+      // jangan ubah style saat sedang drag/drawing/resizing
+      if (action !== ActionTypes.NONE) return;
 
-    // fallback manual (cukup untuk shape)
-    const cloned = { ...el };
-    if (el.points) cloned.points = el.points.map((p) => ({ ...p }));
-    if (el.base && typeof el.base === "object") cloned.base = { ...el.base };
-    return cloned;
-  }, []);
+      // jangan ubah kalau dikunci user lain
+      if (isLockedByOther(selectedId)) return;
+
+      const current = elements.find((e) => e?.id === selectedId);
+      if (!current || current.isDeleted) return;
+
+      const next = { ...current, ...patch };
+
+      // kalau ada `base` (legacy/text), update juga agar konsisten
+      if (current.base && typeof current.base === "object") {
+        next.base = { ...current.base, ...patch };
+      }
+
+      setElements((prev) => prev.map((e) => (e?.id === selectedId ? next : e)));
+
+      sendFinalElement(next);
+    },
+    [
+      selectedId,
+      writingElementId,
+      action,
+      elements,
+      setElements,
+      sendFinalElement,
+      isLockedByOther,
+    ]
+  );
+
+  const releaseMySelectedLock = (reason) => {
+    if (!selectedId) return;
+    if (writingElementId) return;
+
+    const owner = locks?.[selectedId];
+    if (!owner) return;
+    if (String(owner) !== String(myUserId)) return;
+
+    unlockElement(selectedId);
+    deselect();
+    setAction(ActionTypes.NONE);
+  };
+
+  // Coordinates Helper
+  // Get relative position. Bridge between world coordinates and screen coordinates.
+  const getRelativePos = (e) => {
+    // Screen coordinates (affected by zoom/pan from transformRef)
+    const rect = canvasRef.current.getBoundingClientRect();
+
+    let currentScale = transformRef.current?.instance.transformState.scale || 1;
+
+    // Prevent scale to be negative value
+    if (currentScale <= 0 || isNaN(currentScale)) currentScale = 1;
+
+    // Mathematical relation between world coordinates and screen coordinates:
+    // screen = (world * scale) + translate
+    return {
+      x: (e.clientX - rect.left) / currentScale,
+      y: (e.clientY - rect.top) / currentScale,
+    };
+  };
+
+  const distPointToSegment = (px, py, ax, ay, bx, by) => {
+    const dx = bx - ax;
+    const dy = by - ay;
+
+    if (dx === 0 && dy === 0) {
+      // segment degenerate
+      const vx = px - ax;
+      const vy = py - ay;
+      return Math.sqrt(vx * vx + vy * vy);
+    }
+
+    const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+    const tt = Math.max(0, Math.min(1, t));
+
+    const cx = ax + tt * dx;
+    const cy = ay + tt * dy;
+
+    const vx = px - cx;
+    const vy = py - cy;
+    return Math.sqrt(vx * vx + vy * vy);
+  };
+
+  const pencilHitTest = (points, x, y, radius) => {
+    if (!Array.isArray(points) || points.length < 2) return false;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const d = distPointToSegment(x, y, a.x, a.y, b.x, b.y);
+      if (d <= radius) return true;
+    }
+    return false;
+  };
+
+  const eraseAtPoint = (x, y) => {
+    const ERASE_RADIUS = 10;
+
+    // cari dari atas (elemen paling akhir biasanya paling "top")
+    for (let i = elementsActive.length - 1; i >= 0; i--) {
+      const el = elementsActive[i];
+      if (!el || el.isDeleted) continue;
+      if (el.type !== ToolTypes.PENCIL) continue;
+
+      // jangan hapus kalau sudah dihapus pada drag ini
+      if (erasedIdsRef.current.has(el.id)) continue;
+
+      // respect lock: kalau dikunci user lain, skip
+      if (locks?.[el.id] && locks[el.id] !== myUserId) continue;
+
+      const hit = pencilHitTest(el.points, x, y, ERASE_RADIUS);
+      if (!hit) continue;
+
+      const deleted = {
+        ...el,
+        isDeleted: true,
+        deletedAt: Date.now(),
+        deletedBy: myUserId,
+      };
+
+      setElements((prev) => prev.map((p) => (p?.id === el.id ? deleted : p)));
+      sendFinalElement(deleted);
+      unlockElement(el.id);
+
+      if (selectedId === el.id) {
+        deselect();
+        setAction(ActionTypes.NONE);
+      }
+
+      erasedIdsRef.current.add(el.id);
+      return; // hapus 1 stroke per event move (lebih stabil)
+    }
+  };
 
   const cloneWithTransform = useCallback(
     (source, { dx, dy }) => {
@@ -184,26 +488,10 @@ export default function WhiteboardCanvas({
     [deepCloneElement, genSeed]
   );
 
-  const elementsActive = elements.filter((el) => el && !el.isDeleted);
-
-  const elementsToRender = writingElementId
-    ? elementsActive.filter((el) => el?.id !== writingElementId)
-    : elementsActive;
-
-  const { select, deselect, unlockIfOwned, isLockedByOther } =
-    useElementSelection({
-      selectedId,
-      setSelectedId,
-      setSelectedPosition,
-      setAction,
-      locks,
-      myUserId,
-      lockElement,
-      unlockElement,
-    });
-
+  // Copy element
+  // Disabled if DRAWING, MOVING
+  // Must have selection
   const copySelected = useCallback(() => {
-    // jangan ganggu state interaksi (drag/drawing/text editing)
     if (action !== ActionTypes.NONE) return;
     if (writingElementId) return;
     if (!selectedId) return;
@@ -261,6 +549,10 @@ export default function WhiteboardCanvas({
     cloneWithTransform,
   ]);
 
+  // Duplicate element
+  // Similar to copy
+  // But immediately create the duplicated element near (based on defined offset) the original element.
+  // No need to store it in browser clipboard
   const duplicateSelected = useCallback(() => {
     if (action !== ActionTypes.NONE) return;
     if (writingElementId) return;
@@ -289,6 +581,8 @@ export default function WhiteboardCanvas({
     cloneWithTransform,
   ]);
 
+  // Delete selected element using keyboard `Delete` or `Backspace`.
+  // Couldn't delete locked element.
   const deleteSelected = useCallback(() => {
     // jangan hapus saat sedang dragging/drawing atau editing text
     if (action !== ActionTypes.NONE) return;
@@ -335,167 +629,21 @@ export default function WhiteboardCanvas({
     setAction,
   ]);
 
+  // Activate text writing
   const beginEditText = (el) => {
+    if (editDisabled) return;
     if (!el?.id) return;
 
-    textOriginalRef.current = el;
+    if (isLockedByOther(el.id)) return;
+    lockElement(el.id);
+    markLockActivity();
+
+    textOriginalRef.current = structuredClone(el);
     setWritingElementId(el.id);
     setTextDraft(el.text ?? "");
-    lockElement(el.id);
   };
 
-  const autosizeTextarea = useCallback(() => {
-    const ta = textAreaRef.current;
-    if (!ta) return;
-
-    ta.style.height = "0px";
-    ta.style.width = "0px";
-
-    ta.style.height = `${ta.scrollHeight}px`;
-    ta.style.width = `${Math.max(50, ta.scrollWidth + 2)}px`;
-  }, []);
-
-  const clampTransformToBounds = useCallback(() => {
-    const ref = transformRef.current;
-    if (!ref) return;
-
-    const { instance } = ref;
-    if (!instance?.wrapperComponent) return;
-
-    const { scale, positionX, positionY } = instance.transformState;
-    const wrapperRect = instance.wrapperComponent.getBoundingClientRect();
-
-    const wrapperWidth = wrapperRect.width;
-    const wrapperHeight = wrapperRect.height;
-
-    const contentWidth = CANVAS_SIZE * scale;
-    const contentHeight = CANVAS_SIZE * scale;
-
-    const minX = wrapperWidth - contentWidth;
-    const minY = wrapperHeight - contentHeight;
-
-    const maxX = 0;
-    const maxY = 0;
-
-    let newX = positionX;
-    let newY = positionY;
-
-    if (contentWidth > wrapperWidth)
-      newX = Math.min(maxX, Math.max(minX, newX));
-    else newX = (wrapperWidth - contentWidth) / 2;
-
-    if (contentHeight > wrapperHeight)
-      newY = Math.min(maxY, Math.max(minY, newY));
-    else newY = (wrapperHeight - contentHeight) / 2;
-
-    if (Math.abs(newX - positionX) > 0.5 || Math.abs(newY - positionY) > 0.5) {
-      isClampingRef.current = true;
-      ref.setTransform(newX, newY, scale, 0);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!writingElementId) return;
-    autosizeTextarea();
-  }, [textDraft, writingElementId, autosizeTextarea]);
-
-  useEffect(() => {
-    const handleWheel = (e) => {
-      if (e.ctrlKey || e.metaKey) e.preventDefault();
-    };
-    window.addEventListener("wheel", handleWheel, { passive: false });
-    return () => window.removeEventListener("wheel", handleWheel);
-  }, []);
-
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-
-    window.history.pushState(null, document.title, window.location.href);
-
-    const handlePopState = () => {
-      const confirmLeave = window.confirm("Changes you made may not be saved");
-
-      if (confirmLeave) {
-        window.removeEventListener("popstate", handlePopState);
-        navigate("/");
-      } else {
-        window.history.pushState(null, document.title, window.location.href);
-      }
-    };
-
-    window.addEventListener("popstate", handlePopState);
-
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      window.removeEventListener("popstate", handlePopState);
-    };
-  }, [navigate]);
-
-  useEffect(() => {
-    if (writingElementId && textAreaRef.current) {
-      textAreaRef.current.focus();
-      requestAnimationFrame(() => {
-        const ta = textAreaRef.current;
-        if (!ta) return;
-        ta.focus();
-        autosizeTextarea();
-      });
-    }
-  }, [writingElementId, autosizeTextarea]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.width = CANVAS_SIZE;
-    canvas.height = CANVAS_SIZE;
-
-    const ctx = canvas.getContext("2d");
-    drawElements(ctx, elementsToRender, locks, myUserId);
-  }, []); // once
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawElements(ctx, elementsToRender, locks, myUserId);
-
-    // jangan tampilkan selection overlay saat sedang DRAWING (sesuai request kamu)
-    if (action !== ActionTypes.DRAWING) {
-      drawSelectionOverlay(ctx, {
-        elements: elementsToRender,
-        selectedId,
-        locks,
-        myUserId,
-      });
-    }
-  }, [elementsToRender, locks, myUserId, selectedId, action]);
-
-  useEffect(() => {
-    if (typeof onTitleChange === "function") onTitleChange(title);
-  }, [title, onTitleChange]);
-
-  const getRelativePos = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-
-    let currentScale = transformRef.current?.instance.transformState.scale || 1;
-    if (currentScale <= 0 || isNaN(currentScale)) currentScale = 1;
-
-    return {
-      x: (e.clientX - rect.left) / currentScale,
-      y: (e.clientY - rect.top) / currentScale,
-    };
-  };
-
-  const measureTextBlock = useCallback((text, fontSize, lineHeight) => {
+  const measureTextBlock = (text, fontSize, lineHeight) => {
     const canvas = canvasRef.current;
     if (!canvas) return { width: 1, height: lineHeight };
 
@@ -520,7 +668,7 @@ export default function WhiteboardCanvas({
       width: Math.max(1, Math.ceil(maxWidth)),
       height: Math.max(1, Math.ceil(height)),
     };
-  }, []);
+  };
 
   const handleTextareaBlur = () => {
     if (!writingElementId) return;
@@ -531,13 +679,15 @@ export default function WhiteboardCanvas({
 
     const current = elements.find((el) => el?.id === id);
     if (!current) {
-      unlockElement(id);
+      if (locks && locks[id] === myUserId) unlockElement(id);
+      id;
       return;
     }
 
     if (!value.trim()) {
       setElements((prev) => prev.filter((el) => el?.id !== id));
-      unlockElement(id);
+      if (locks && locks[id] === myUserId) unlockElement(id);
+      id;
       return;
     }
 
@@ -588,16 +738,352 @@ export default function WhiteboardCanvas({
       prev.map((el) => (el?.id === id ? finalElement : el))
     );
     sendFinalElement(finalElement);
-    unlockElement(id);
+    if (locks && locks[id] === myUserId) unlockElement(id);
 
     setTextDraft("");
     textOriginalRef.current = null;
   };
 
+  // Transform Helper
+  const clampTransformToBounds = () => {
+    const ref = transformRef.current;
+    if (!ref) return;
+
+    const { instance } = ref;
+    if (!instance?.wrapperComponent) return;
+
+    const { scale, positionX, positionY } = instance.transformState;
+    const wrapperRect = instance.wrapperComponent.getBoundingClientRect();
+
+    const wrapperWidth = wrapperRect.width;
+    const wrapperHeight = wrapperRect.height;
+
+    const contentWidth = CANVAS_SIZE * scale;
+    const contentHeight = CANVAS_SIZE * scale;
+
+    const minX = wrapperWidth - contentWidth;
+    const minY = wrapperHeight - contentHeight;
+
+    const maxX = 0;
+    const maxY = 0;
+
+    let newX = positionX;
+    let newY = positionY;
+
+    if (contentWidth > wrapperWidth)
+      newX = Math.min(maxX, Math.max(minX, newX));
+    else newX = (wrapperWidth - contentWidth) / 2;
+
+    if (contentHeight > wrapperHeight)
+      newY = Math.min(maxY, Math.max(minY, newY));
+    else newY = (wrapperHeight - contentHeight) / 2;
+
+    if (Math.abs(newX - positionX) > 0.5 || Math.abs(newY - positionY) > 0.5) {
+      isClampingRef.current = true;
+      ref.setTransform(newX, newY, scale, 0);
+    }
+  };
+
+  // Re-center the screens
+  const handleResetZoom = () => {
+    transformRef.current?.centerView(1, 300, "easeOut");
+  };
+
+  const selectedElement = useMemo(() => {
+    if (!selectedId) return null;
+    return elementsActive.find((el) => el?.id === selectedId) || null;
+  }, [elementsActive, selectedId]);
+
+  const actionBarPos = useMemo(() => {
+    if (!selectedElement) return null;
+
+    const b = getElementBounds(selectedElement);
+    const left = Math.min(b.x1, b.x2);
+    const right = Math.max(b.x1, b.x2);
+    const top = Math.min(b.y1, b.y2);
+
+    const cx = (left + right) / 2;
+    const y = Math.max(10, top - 14); // sedikit di atas element
+
+    return { x: cx, y };
+  }, [selectedElement]);
+
+  // Adjust size of textarea to the size of the content while editing text
+  // Textarea is displayed without scrollbar
+  useEffect(() => {
+    if (!writingElementId) return;
+    const ta = textAreaRef.current;
+    if (!ta) return;
+
+    ta.style.height = "0px";
+    ta.style.width = "0px";
+    ta.style.height = `${ta.scrollHeight}px`;
+    ta.style.width = `${Math.max(50, ta.scrollWidth + 2)}px`;
+  }, [textDraft, writingElementId]);
+
+  // Prevent browser default zoom
+  // Instead we modify zoom functionality by using react-zoom-pan-pinch
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    };
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    window.history.pushState(null, document.title, window.location.href);
+
+    const handlePopState = () => {
+      const confirmLeave = window.confirm("Changes you made may not be saved");
+
+      if (confirmLeave) {
+        window.removeEventListener("popstate", handlePopState);
+        navigate("/");
+      } else {
+        window.history.pushState(null, document.title, window.location.href);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [navigate]);
+
+  // If user enter editing text mode, browser immediately focus on textarea.
+  // To improve consistency and make sure DOM is already stable, we use requestAnimationFrame to trigger focus on next render frame.
+  useEffect(() => {
+    if (writingElementId && textAreaRef.current) {
+      textAreaRef.current.focus();
+      requestAnimationFrame(() => {
+        const ta = textAreaRef.current;
+        if (!ta) return;
+        ta.focus();
+      });
+    }
+  }, [writingElementId]);
+
+  // First initialization
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = CANVAS_SIZE;
+    canvas.height = CANVAS_SIZE;
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawElements(ctx, elementsToRender, locks, myUserId);
+
+    // jangan tampilkan selection overlay saat sedang DRAWING
+    if (action !== ActionTypes.DRAWING) {
+      drawSelectionOverlay(ctx, {
+        elements: elementsToRender,
+        selectedId,
+        locks,
+        myUserId,
+        userNameById,
+      });
+    }
+  }, [elementsToRender, locks, myUserId, selectedId, action]);
+
+  useEffect(() => {
+    if (typeof onTitleChange === "function") onTitleChange(title);
+  }, [title, onTitleChange]);
+
+  // Panning via mouse scroll wheel
+  // Intercept default panning (which provided by library)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheel = (e) => {
+      if (!transformRef.current) return;
+      if (e.ctrlKey || e.metaKey) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const { instance } = transformRef.current;
+      const { scale, positionX, positionY } = instance.transformState;
+      const wrapperRect = instance.wrapperComponent.getBoundingClientRect();
+
+      const scrollSpeed = 1;
+      let deltaX = e.deltaX;
+      let deltaY = e.deltaY;
+
+      if (e.shiftKey && deltaY !== 0 && deltaX === 0) {
+        deltaX = deltaY;
+        deltaY = 0;
+      }
+
+      let newX = positionX - deltaX * scrollSpeed;
+      let newY = positionY - deltaY * scrollSpeed;
+
+      const wrapperWidth = wrapperRect.width;
+      const wrapperHeight = wrapperRect.height;
+
+      const contentWidth = CANVAS_SIZE * scale;
+      const contentHeight = CANVAS_SIZE * scale;
+
+      const minX = wrapperWidth - contentWidth;
+      const minY = wrapperHeight - contentHeight;
+
+      const maxX = 0;
+      const maxY = 0;
+
+      if (contentWidth > wrapperWidth)
+        newX = Math.min(maxX, Math.max(minX, newX));
+      else newX = (wrapperWidth - contentWidth) / 2;
+
+      if (contentHeight > wrapperHeight)
+        newY = Math.min(maxY, Math.max(minY, newY));
+      else newY = (wrapperHeight - contentHeight) / 2;
+
+      transformRef.current.setTransform(newX, newY, scale, 0);
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => container.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Mencegah state selectedId nyangkut saat element hilang karena soft delete orang lain
+  useEffect(() => {
+    if (!selectedId) return;
+
+    const el = elements.find((e) => e?.id === selectedId);
+    if (!el || el.isDeleted) {
+      deselect();
+      setAction(ActionTypes.NONE);
+    }
+  }, [elements, selectedId, deselect, setAction]);
+
+  useEffect(() => {
+    // kalau tidak ada selection, reset marker sync
+    if (!selectedId) {
+      lastStyleSyncIdRef.current = null;
+      return;
+    }
+
+    // sync hanya saat selection berubah (hindari spam saat element sedang di-drag)
+    if (lastStyleSyncIdRef.current === selectedId) return;
+    lastStyleSyncIdRef.current = selectedId;
+
+    const el = elements.find((e) => e?.id === selectedId);
+    if (!el) return;
+
+    // Ambil style dari level atas, fallback ke el.base (untuk legacy/text)
+    const nextStroke = el.stroke ?? el.base?.stroke ?? "#111827";
+    const nextWidthRaw = el.strokeWidth ?? el.base?.strokeWidth;
+    const nextWidth =
+      typeof nextWidthRaw === "number" && !isNaN(nextWidthRaw)
+        ? nextWidthRaw
+        : 2;
+
+    setStrokeColor(nextStroke);
+    setStrokeWidth(nextWidth);
+
+    // Fill hanya untuk shape tertentu
+    const fillable =
+      el.type === ToolTypes.RECTANGLE ||
+      el.type === ToolTypes.CIRCLE ||
+      el.type === ToolTypes.TRIANGLE;
+
+    if (fillable) {
+      const nextFill = el.fill ?? el.base?.fill ?? "";
+      setFillColor(nextFill || "");
+    } else {
+      setFillColor("");
+    }
+  }, [selectedId, elements, setStrokeColor, setStrokeWidth, setFillColor]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!selectedId) return;
+      if (writingElementId) return;
+
+      // hanya auto-unlock kalau lock milik kita
+      const owner = locks?.[selectedId];
+      if (!owner || owner !== myUserId) return;
+
+      const last = lastLockActivityAtRef.current || 0;
+      if (!last) return;
+
+      const idleMs = Date.now() - last;
+      if (idleMs < LOCK_IDLE_TIMEOUT_MS) return;
+
+      unlockElement(selectedId);
+      deselect();
+      setAction(ActionTypes.NONE);
+    }, 1000);
+
+    return () => clearInterval(t);
+  }, [selectedId, writingElementId, locks, myUserId, deselect]);
+
+  useEffect(() => {
+    if (!writingElementId) return;
+
+    let owner = null;
+    if (locks && writingElementId in locks) {
+      owner = locks[writingElementId];
+    }
+    if (!owner) return;
+
+    if (owner !== myUserId) {
+      setWritingElementId(null);
+      setTextDraft("");
+      textOriginalRef.current = null;
+    }
+  }, [writingElementId, locks, myUserId]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+
+    const owner = locks?.[selectedId];
+    if (owner && String(owner) === String(myUserId)) {
+      markLockActivity();
+    }
+  }, [selectedId, locks, myUserId]);
+
+  // Auto-unlock when tab is hidden or window blur
+  useEffect(() => {
+    const onBlur = () => {
+      releaseMySelectedLock();
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        releaseMySelectedLock();
+      }
+    };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [selectedId, locks, myUserId, writingElementId]);
+
   const handleMouseDown = (e) => {
     if (wbBlocked) return;
     if (!canEdit) {
-      notifyViewOnly();
       return;
     }
     const { x, y } = getRelativePos(e);
@@ -619,8 +1105,8 @@ export default function WhiteboardCanvas({
         x2: x,
         y2: y,
         text: "",
-        fontSize: 24,
-        lineHeight: 30,
+        stroke: strokeColor,
+        strokeWidth: strokeWidth,
       });
 
       setElements((prev) => [...prev, element]);
@@ -636,6 +1122,8 @@ export default function WhiteboardCanvas({
     // DRAWING TOOLS
     if (
       currentTool === ToolTypes.RECTANGLE ||
+      currentTool === ToolTypes.CIRCLE ||
+      currentTool === ToolTypes.TRIANGLE ||
       currentTool === ToolTypes.LINE ||
       currentTool === ToolTypes.PENCIL
     ) {
@@ -652,10 +1140,13 @@ export default function WhiteboardCanvas({
         y1: y,
         x2: x,
         y2: y,
+        stroke: strokeColor,
+        strokeWidth: strokeWidth,
+        fill: isFillableTool(currentTool) ? fillColor : "",
       });
 
       drawingIdRef.current = id;
-      interactionRef.current.originalElement = element;
+      // interactionRef.current.originalElement = element;
       setAction(ActionTypes.DRAWING);
 
       setElements((prev) => [...prev, element]);
@@ -692,17 +1183,30 @@ export default function WhiteboardCanvas({
 
             setSelectedPosition(hitPos);
 
+            const isCorner =
+              hitPos === CursorPosition.TOP_LEFT ||
+              hitPos === CursorPosition.TOP_RIGHT ||
+              hitPos === CursorPosition.BOTTOM_LEFT ||
+              hitPos === CursorPosition.BOTTOM_RIGHT;
+
             const canResize =
               selectedEl.type === ToolTypes.RECTANGLE ||
+              selectedEl.type === ToolTypes.CIRCLE ||
+              selectedEl.type === ToolTypes.TRIANGLE ||
               selectedEl.type === ToolTypes.LINE ||
               selectedEl.type === ToolTypes.PENCIL ||
               selectedEl.type === ToolTypes.TEXT;
 
-            setAction(
-              hitPos === CursorPosition.INSIDE || !canResize
-                ? ActionTypes.MOVING
-                : ActionTypes.RESIZING
-            );
+            // Circle: resize hanya dari corner supaya tetap bulat
+            if (selectedEl.type === ToolTypes.CIRCLE && !isCorner) {
+              setAction(ActionTypes.MOVING);
+            } else {
+              setAction(
+                hitPos === CursorPosition.INSIDE || !canResize
+                  ? ActionTypes.MOVING
+                  : ActionTypes.RESIZING
+              );
+            }
 
             // lock biar peer lihat
             if (locks?.[selectedId] !== myUserId) lockElement(selectedId);
@@ -729,6 +1233,8 @@ export default function WhiteboardCanvas({
         return;
       }
 
+      markLockActivity();
+
       // snapshot untuk move/resize
       interactionRef.current.originalElement = {
         ...element,
@@ -737,11 +1243,30 @@ export default function WhiteboardCanvas({
           : undefined,
       };
 
-      select(element.id, position);
+      const res = select(element.id, position);
+      if (res && res.interactive) {
+        markLockActivity();
+      }
 
       if (position === CursorPosition.INSIDE) setAction(ActionTypes.MOVING);
       else setAction(ActionTypes.RESIZING);
 
+      return;
+    }
+
+    // ERASER TOOL (pencil-only)
+    if (currentTool === ToolTypes.ERASER) {
+      if (editDisabled) return;
+      if (writingElementId) return;
+
+      e.stopPropagation();
+
+      erasedIdsRef.current = new Set();
+      setAction(ActionTypes.ERASING);
+
+      deselect();
+
+      eraseAtPoint(x, y);
       return;
     }
   };
@@ -756,6 +1281,12 @@ export default function WhiteboardCanvas({
 
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    if (action === ActionTypes.ERASING) {
+      // selama drag eraser: hapus pencil stroke yang kena
+      eraseAtPoint(x, y);
+      return;
+    }
 
     // cursor preview (no action)
     if (action === ActionTypes.NONE) {
@@ -778,6 +1309,8 @@ export default function WhiteboardCanvas({
         canvas.style.cursor = "text";
       } else if (currentTool === ToolTypes.HAND) {
         canvas.style.cursor = "grab";
+      } else if (currentTool === ToolTypes.ERASER) {
+        canvas.style.cursor = "crosshair";
       } else {
         canvas.style.cursor = "crosshair";
       }
@@ -788,6 +1321,8 @@ export default function WhiteboardCanvas({
     if (action === ActionTypes.DRAWING) {
       const drawId = drawingIdRef.current;
       if (!drawId) return;
+
+      markLockActivity();
 
       setElements((prev) => {
         const { elements: updated, element: updatedElement } = updateElement(
@@ -816,6 +1351,8 @@ export default function WhiteboardCanvas({
     if (action === ActionTypes.MOVING) {
       const dx = x - originX;
       const dy = y - originY;
+
+      markLockActivity();
 
       setElements((prev) => {
         const { elements: updated, element: updatedElement } = updateElement(
@@ -852,6 +1389,8 @@ export default function WhiteboardCanvas({
     }
 
     if (action === ActionTypes.RESIZING) {
+      markLockActivity();
+
       setElements((prev) => {
         const { elements: updated, element: updatedElement } = updateElement(
           prev,
@@ -860,6 +1399,8 @@ export default function WhiteboardCanvas({
             if (
               el.type !== ToolTypes.RECTANGLE &&
               el.type !== ToolTypes.LINE &&
+              el.type !== ToolTypes.CIRCLE &&
+              el.type !== ToolTypes.TRIANGLE &&
               el.type !== ToolTypes.PENCIL &&
               el.type !== ToolTypes.TEXT
             )
@@ -964,6 +1505,69 @@ export default function WhiteboardCanvas({
               };
             }
 
+            if (el.type === ToolTypes.CIRCLE) {
+              const orig = interactionRef.current.originalElement;
+              if (!orig) return el;
+
+              // gunakan bounds orig (normalized)
+              const oLeft = Math.min(orig.x1, orig.x2);
+              const oRight = Math.max(orig.x1, orig.x2);
+              const oTop = Math.min(orig.y1, orig.y2);
+              const oBottom = Math.max(orig.y1, orig.y2);
+
+              // tentukan anchor = opposite corner
+              let ax = oLeft;
+              let ay = oTop;
+
+              if (selectedPosition === CursorPosition.TOP_LEFT) {
+                ax = oRight;
+                ay = oBottom;
+              } else if (selectedPosition === CursorPosition.TOP_RIGHT) {
+                ax = oLeft;
+                ay = oBottom;
+              } else if (selectedPosition === CursorPosition.BOTTOM_LEFT) {
+                ax = oRight;
+                ay = oTop;
+              } else if (selectedPosition === CursorPosition.BOTTOM_RIGHT) {
+                ax = oLeft;
+                ay = oTop;
+              } else {
+                // circle resize non-corner tidak didukung (sudah dicegah di mousedown)
+                return el;
+              }
+
+              const side = Math.max(Math.abs(x - ax), Math.abs(y - ay)) || 1;
+
+              let nx1 = ax,
+                ny1 = ay,
+                nx2 = ax,
+                ny2 = ay;
+
+              if (selectedPosition === CursorPosition.TOP_LEFT) {
+                nx1 = ax - side;
+                ny1 = ay - side;
+                nx2 = ax;
+                ny2 = ay;
+              } else if (selectedPosition === CursorPosition.TOP_RIGHT) {
+                nx1 = ax;
+                ny1 = ay - side;
+                nx2 = ax + side;
+                ny2 = ay;
+              } else if (selectedPosition === CursorPosition.BOTTOM_LEFT) {
+                nx1 = ax - side;
+                ny1 = ay;
+                nx2 = ax;
+                ny2 = ay + side;
+              } else if (selectedPosition === CursorPosition.BOTTOM_RIGHT) {
+                nx1 = ax;
+                ny1 = ay;
+                nx2 = ax + side;
+                ny2 = ay + side;
+              }
+
+              return { ...el, x1: nx1, y1: ny1, x2: nx2, y2: ny2 };
+            }
+
             const coords = getResizedCoordinates({
               type: el.type,
               position: selectedPosition,
@@ -1002,6 +1606,8 @@ export default function WhiteboardCanvas({
     const rawElement = elements[index];
     const finalElement =
       rawElement.type === ToolTypes.RECTANGLE ||
+      rawElement.type === ToolTypes.CIRCLE ||
+      rawElement.type === ToolTypes.TRIANGLE ||
       rawElement.type === ToolTypes.LINE
         ? adjustElementCoordinates(rawElement)
         : rawElement;
@@ -1022,6 +1628,12 @@ export default function WhiteboardCanvas({
       return;
     }
 
+    if (action === ActionTypes.ERASING) {
+      erasedIdsRef.current = new Set();
+      setAction(ActionTypes.NONE);
+      return;
+    }
+
     // MOVING/RESIZING selesai => TETAP selected & TIDAK unlock (biar bisa delete/duplicate next)
     setSelectedPosition(CursorPosition.INSIDE);
     setAction(ActionTypes.NONE);
@@ -1031,17 +1643,13 @@ export default function WhiteboardCanvas({
       canvas.style.cursor = getCursorForPosition(CursorPosition.INSIDE);
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e) => {
     if (action !== ActionTypes.NONE) finishInteraction();
   };
 
   const handleMouseLeave = () => {
     if (action !== ActionTypes.NONE) finishInteraction();
   };
-
-  const writingElement = writingElementId
-    ? elements.find((el) => el.id === writingElementId)
-    : null;
 
   const handleShortcutAction = useCallback(
     (act) => {
@@ -1089,92 +1697,39 @@ export default function WhiteboardCanvas({
   );
   useKeyboardShortcuts(handleShortcutAction);
 
-  const handleResetZoom = () => {
-    transformRef.current?.centerView(1, 300, "easeOut");
-  };
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const onWheel = (e) => {
-      if (!transformRef.current) return;
-      if (e.ctrlKey || e.metaKey) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      const { instance } = transformRef.current;
-      const { scale, positionX, positionY } = instance.transformState;
-      const wrapperRect = instance.wrapperComponent.getBoundingClientRect();
-
-      const scrollSpeed = 1;
-      let deltaX = e.deltaX;
-      let deltaY = e.deltaY;
-
-      if (e.shiftKey && deltaY !== 0 && deltaX === 0) {
-        deltaX = deltaY;
-        deltaY = 0;
-      }
-
-      let newX = positionX - deltaX * scrollSpeed;
-      let newY = positionY - deltaY * scrollSpeed;
-
-      const wrapperWidth = wrapperRect.width;
-      const wrapperHeight = wrapperRect.height;
-
-      const contentWidth = CANVAS_SIZE * scale;
-      const contentHeight = CANVAS_SIZE * scale;
-
-      const minX = wrapperWidth - contentWidth;
-      const minY = wrapperHeight - contentHeight;
-
-      const maxX = 0;
-      const maxY = 0;
-
-      if (contentWidth > wrapperWidth)
-        newX = Math.min(maxX, Math.max(minX, newX));
-      else newX = (wrapperWidth - contentWidth) / 2;
-
-      if (contentHeight > wrapperHeight)
-        newY = Math.min(maxY, Math.max(minY, newY));
-      else newY = (wrapperHeight - contentHeight) / 2;
-
-      transformRef.current.setTransform(newX, newY, scale, 0);
-    };
-
-    container.addEventListener("wheel", onWheel, { passive: false });
-    return () => container.removeEventListener("wheel", onWheel);
-  }, []);
-
-  // Mencegah state selectedId nyangkut saat element hilang karena soft delete orang lain
-  useEffect(() => {
-    if (!selectedId) return;
-
-    const el = elements.find((e) => e?.id === selectedId);
-    if (!el || el.isDeleted) {
-      deselect();
-      setAction(ActionTypes.NONE);
-    }
-  }, [elements, selectedId, deselect, setAction]);
-
   return (
     <div
       ref={containerRef}
       className="relative h-full w-full bg-slate-50 overflow-hidden"
-      onMouseDownCapture={(e) => {
+      // Fires first before event travel further to children.
+      // Intercept during text handling.
+      onPointerDownCapture={(e) => {
         if (!writingElementId) return;
+
         const ta = textAreaRef.current;
         if (ta && (e.target === ta || ta.contains(e.target))) return;
         ta?.blur();
+        setAction(ActionTypes.NONE);
+        setCurrentTool(ToolTypes.POINTER);
       }}
     >
+      {/* If  */}
       {wbBlocked && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/10 backdrop-blur-[1px]">
           <div className="rounded-xl bg-white px-4 py-2 text-sm text-slate-700 shadow">
-            {wbConnectionState === "reconnecting"
-              ? "Whiteboard reconnecting… Editing is temporarily disabled."
-              : "Whiteboard disconnected. Please wait or refresh."}
+            {wbConnectionState === "reconnecting" ? (
+              <LoadingModal
+                open={wbBlocked}
+                title="Reconnecting"
+                subtitle="Whiteboard reconnecting… Editing is temporarily disabled."
+              />
+            ) : (
+              <LoadingModal
+                open={wbBlocked}
+                title="Disconnected"
+                subtitle="Whiteboard disconnected. Please wait or refresh."
+              />
+            )}
           </div>
         </div>
       )}
@@ -1193,7 +1748,9 @@ export default function WhiteboardCanvas({
         centerOnInit={true}
         limitToBounds={true}
         panning={{
+          // Disable panning IF tool is not HAND or user is currently writing
           disabled: currentTool !== ToolTypes.HAND || !!writingElementId,
+          // Disable panning IF user moving text editor
           excluded: ["wb-text-editor"],
           velocityDisabled: false,
           velocityAnimation: {
@@ -1244,40 +1801,101 @@ export default function WhiteboardCanvas({
               ref={canvasRef}
               width={CANVAS_SIZE}
               height={CANVAS_SIZE}
-              className="block"
+              className="block wb-canvas"
+              style={{ touchAction: "none" }}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseLeave}
               onDoubleClick={(e) => {
-                if (writingElementId) return;
+                // if (writingElementId) return;
                 if (currentTool !== ToolTypes.POINTER) return;
 
                 const { x, y } = getRelativePos(e);
                 const { element } = getElementAtPosition(elementsActive, x, y);
 
-                if (element?.type === ToolTypes.TEXT) beginEditText(element);
+                if (element?.type === ToolTypes.TEXT) {
+                  if (isLockedByOther(element.id)) return;
+                  beginEditText(element);
+                }
               }}
             />
+
+            {actionBarPos &&
+              selectedElement &&
+              action === ActionTypes.NONE &&
+              !writingElementId &&
+              !isLockedByOther(selectedId) && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: actionBarPos.x,
+                    top: actionBarPos.y,
+                    transform: "translate(-50%, -100%)",
+                    pointerEvents: "auto",
+                    zIndex: 60,
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-1 rounded-xl bg-white/95 px-1.5 py-1 shadow-lg ring-1 ring-slate-900/10 backdrop-blur-sm">
+                    <button
+                      className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                      onClick={() => {
+                        copySelected();
+                      }}
+                      title="Copy"
+                    >
+                      <FaRegCopy className="h-5 w-5"></FaRegCopy>
+                    </button>
+
+                    <button
+                      className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                      onClick={() => {
+                        duplicateSelected();
+                      }}
+                      title="Duplicate"
+                    >
+                      <GrDuplicate className="h-5 w-5"></GrDuplicate>
+                    </button>
+
+                    <button
+                      className="rounded-lg px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                      onClick={() => {
+                        deleteSelected();
+                      }}
+                      title="Delete"
+                    >
+                      <RiDeleteBin6Line className="h-5 w-5"></RiDeleteBin6Line>
+                    </button>
+                  </div>
+                </div>
+              )}
 
             {writingElement && (
               <textarea
                 className="wb-text-editor"
                 ref={textAreaRef}
                 value={textDraft}
-                onChange={(e) => setTextDraft(e.target.value)}
-                onFocus={() => setIsTextFocused(true)}
+                onChange={(e) => {
+                  setTextDraft(e.target.value);
+                  markLockActivity();
+                }}
                 onBlur={() => {
-                  setIsTextFocused(false);
                   handleTextareaBlur();
                 }}
                 wrap="off"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                }}
                 onPointerDownCapture={(e) => e.stopPropagation()}
                 onPointerMoveCapture={(e) => e.stopPropagation()}
-                onMouseDownCapture={(e) => e.stopPropagation()}
                 spellCheck={false}
                 autoCorrect="off"
                 autoComplete="off"
@@ -1300,21 +1918,24 @@ export default function WhiteboardCanvas({
                     setWritingElementId(null);
                     setTextDraft("");
                     textOriginalRef.current = null;
-                    unlockElement(id);
+                    if (locks && locks[id] === myUserId) {
+                      unlockElement(id);
+                    }
+
                     return;
                   }
 
-                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                    e.preventDefault();
-                    e.currentTarget.blur();
+                  if (e.key === "Enter") {
+                    const shiftKey = e.shiftKey;
+
+                    if (!shiftKey) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.currentTarget.blur();
+                      setSelectedId(null);
+                      return;
+                    }
                   }
-                }}
-                onInput={(e) => {
-                  const ta = e.currentTarget;
-                  ta.style.height = "auto";
-                  ta.style.height = `${ta.scrollHeight}px`;
-                  ta.style.width = "auto";
-                  ta.style.width = `${Math.max(50, ta.scrollWidth + 2)}px`;
                 }}
                 style={{
                   position: "absolute",
@@ -1369,6 +1990,133 @@ export default function WhiteboardCanvas({
           <button className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-200 text-sm text-slate-700 shadow">
             ⏱
           </button>
+          <div className="relative">
+            <button
+              disabled={editDisabled}
+              onClick={() => {
+                setStyleOpen((prev) => !prev);
+                setShapeMenuOpen(false);
+              }}
+              className={`flex h-11 w-11 items-center justify-center rounded-xl shadow ${
+                editDisabled
+                  ? "bg-slate-200 text-slate-400"
+                  : "bg-slate-200 text-slate-700 hover:bg-slate-100"
+              }`}
+              title="Stroke options"
+            >
+              <div
+                className="h-5 w-5 rounded-full ring-2 ring-white"
+                style={{ backgroundColor: strokeColor }}
+              />
+            </button>
+
+            {styleOpen && (
+              <div
+                className="absolute left-12 top-0 z-30 w-44 rounded-xl bg-white p-2 shadow-lg ring-1 ring-slate-900/10"
+                onMouseLeave={() => setStyleOpen(false)}
+              >
+                <div className="mb-2 text-[11px] font-semibold text-slate-500">
+                  Stroke color
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {STROKE_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`h-6 w-6 rounded-full ring-2 ${
+                        strokeColor === c ? "ring-slate-900" : "ring-slate-200"
+                      }`}
+                      style={{ backgroundColor: c }}
+                      onClick={() => {
+                        setStrokeColor(c);
+                        applyStyleToSelected({ stroke: c });
+                      }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+
+                <div className="mt-3 mb-2 text-[11px] font-semibold text-slate-500">
+                  Stroke width
+                </div>
+
+                <div className="flex gap-2">
+                  {STROKE_WIDTHS.map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      onClick={() => {
+                        setStrokeWidth(w);
+                        applyStyleToSelected({ stroke: c });
+                      }}
+                      className={`flex flex-1 items-center justify-center rounded-lg border px-2 py-2 ${
+                        strokeWidth === w
+                          ? "border-slate-900 bg-slate-50"
+                          : "border-slate-200 bg-white hover:bg-slate-50"
+                      }`}
+                      title={`${w}px`}
+                    >
+                      <div
+                        className="w-7 rounded-full"
+                        style={{ height: w, backgroundColor: strokeColor }}
+                      />
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-3 mb-2 text-[11px] font-semibold text-slate-500">
+                  Fill (shapes only)
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFillColor(""); // apply hanya kalau selected element memang shape fillable
+                      const sel = elements.find((e) => e?.id === selectedId);
+                      if (sel && isFillableType(sel.type)) {
+                        applyStyleToSelected({ fill: "" });
+                      }
+                    }}
+                    className={`rounded-lg border px-2 py-1 text-xs ${
+                      fillColor === ""
+                        ? "border-slate-900 bg-slate-50"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                    title="No fill"
+                  >
+                    No
+                  </button>
+
+                  {STROKE_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => {
+                        setFillColor(c);
+                        const sel = elements.find((e) => e?.id === selectedId);
+                        if (sel && isFillableType(sel.type)) {
+                          applyStyleToSelected({ fill: c });
+                        }
+                      }}
+                      className={`h-6 w-6 rounded-full ring-2 ${
+                        fillColor === c ? "ring-slate-900" : "ring-slate-200"
+                      }`}
+                      style={{ backgroundColor: c }}
+                      title={c}
+                    />
+                  ))}
+                </div>
+
+                {!isFillableTool(currentTool) && (
+                  <div className="mt-2 text-[11px] text-slate-400">
+                    Fill only applies to Rectangle, Circle, Triangle.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="flex flex-col gap-2 rounded-2xl bg-slate-200 px-1 py-2 shadow">
             <ToolButton
@@ -1377,6 +2125,8 @@ export default function WhiteboardCanvas({
                 if (writingElementId) textAreaRef.current?.blur();
                 setCurrentTool(ToolTypes.POINTER);
                 setAction(ActionTypes.NONE);
+                setShapeMenuOpen(false);
+                setStyleOpen(false);
               }}
             >
               ▲
@@ -1387,6 +2137,8 @@ export default function WhiteboardCanvas({
               onClick={() => {
                 setCurrentTool(ToolTypes.HAND);
                 setAction(ActionTypes.NONE);
+                setShapeMenuOpen(false);
+                setStyleOpen(false);
               }}
             >
               ✋
@@ -1395,40 +2147,101 @@ export default function WhiteboardCanvas({
             <ToolButton
               active={currentTool === ToolTypes.PENCIL}
               onClick={() => {
-                if (editDisabled) return notifyViewOnly();
+                if (editDisabled) return;
 
                 setCurrentTool(ToolTypes.PENCIL);
+                setShapeMenuOpen(false);
+                setStyleOpen(false);
               }}
             >
               ✏️
             </ToolButton>
-
             <ToolButton
-              active={currentTool === ToolTypes.RECTANGLE}
+              active={currentTool === ToolTypes.ERASER}
               onClick={() => {
-                if (editDisabled) return notifyViewOnly();
-
-                setCurrentTool(ToolTypes.RECTANGLE);
+                if (editDisabled) return;
+                if (writingElementId) textAreaRef.current?.blur();
+                setCurrentTool(ToolTypes.ERASER);
+                setAction(ActionTypes.NONE);
+                setShapeMenuOpen(false);
+                setStyleOpen(false);
               }}
             >
-              ▢
+              🧽
             </ToolButton>
 
-            <ToolButton
-              active={currentTool === ToolTypes.LINE}
-              onClick={() => {
-                if (editDisabled) return notifyViewOnly();
+            <div className="relative">
+              <ToolButton
+                active={isShapeTool(currentTool)}
+                onClick={() => {
+                  if (editDisabled) return;
+                  setShapeMenuOpen((prev) => !prev);
+                  setStyleOpen(false);
+                }}
+              >
+                {getShapeIcon(currentTool)}
+              </ToolButton>
 
-                setCurrentTool(ToolTypes.LINE);
-              }}
-            >
-              ／
-            </ToolButton>
+              {shapeMenuOpen && (
+                <div
+                  className="absolute left-12 top-0 z-30 w-40 rounded-xl bg-white p-2 shadow-lg ring-1 ring-slate-900/10"
+                  onMouseLeave={() => setShapeMenuOpen(false)}
+                >
+                  <button
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setCurrentTool(ToolTypes.RECTANGLE);
+                      setShapeMenuOpen(false);
+                      setShapeMenuOpen(false);
+                      setStyleOpen(false);
+                    }}
+                  >
+                    ▢ Rectangle
+                  </button>
+
+                  <button
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setCurrentTool(ToolTypes.CIRCLE);
+                      setShapeMenuOpen(false);
+                      setShapeMenuOpen(false);
+                      setStyleOpen(false);
+                    }}
+                  >
+                    ○ Circle
+                  </button>
+
+                  <button
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setCurrentTool(ToolTypes.TRIANGLE);
+                      setShapeMenuOpen(false);
+                      setShapeMenuOpen(false);
+                      setStyleOpen(false);
+                    }}
+                  >
+                    △ Triangle
+                  </button>
+
+                  <button
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setCurrentTool(ToolTypes.LINE);
+                      setShapeMenuOpen(false);
+                      setShapeMenuOpen(false);
+                      setStyleOpen(false);
+                    }}
+                  >
+                    ／ Line
+                  </button>
+                </div>
+              )}
+            </div>
 
             <ToolButton
               active={false}
               onClick={() => {
-                if (editDisabled) return notifyViewOnly();
+                if (editDisabled) return;
 
                 if (writingElementId) textAreaRef.current?.blur();
                 if (selectedId) {
@@ -1441,6 +2254,8 @@ export default function WhiteboardCanvas({
                   setWritingElementId(null);
                   deselect();
                   clearBoard(true);
+                  setShapeMenuOpen(false);
+                  setStyleOpen(false);
                 }
               }}
             >
@@ -1449,7 +2264,11 @@ export default function WhiteboardCanvas({
 
             <ToolButton
               active={currentTool === ToolTypes.TEXT}
-              onClick={() => setCurrentTool(ToolTypes.TEXT)}
+              onClick={() => {
+                setCurrentTool(ToolTypes.TEXT);
+                setShapeMenuOpen(false);
+                setStyleOpen(false);
+              }}
             >
               T
             </ToolButton>

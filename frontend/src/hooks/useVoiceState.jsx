@@ -272,7 +272,7 @@ export function useVoiceState({ roomId }) {
       room.on(RoomEvent.TrackSubscribed, (track) => {
         // Attach audio tracks so we can hear others
         if (track.kind === Track.Kind.Audio) {
-          const el = track.attach(); // LiveKit recommended attach flow :contentReference[oaicite:2]{index=2}
+          const el = track.attach();
           el.autoplay = true;
           el.muted = isDeafened; // apply deafen state
           el.style.display = "none";
@@ -446,7 +446,7 @@ export function useVoiceState({ roomId }) {
     setAllRemoteAudioMuted,
     syncParticipants,
     refreshDevices,
-    audioInputs,
+    // audioInputs,
   ]);
 
   const toggleDeafen = useCallback(async () => {

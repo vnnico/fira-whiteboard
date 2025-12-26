@@ -3,14 +3,24 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import { useAuth } from "./hooks/useAuth";
 import WhiteboardPage from "./pages/WhiteboardPage";
+import { useEffect, useState } from "react";
 
 function PrivateRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
+  const [delayDone, setDelayDone] = useState(false);
 
-  if (loading) {
+  // Temporary for simulate loading
+  useEffect(() => {
+    const t = setTimeout(() => setDelayDone(true), 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (loading || !delayDone) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="animate-pulse text-sm text-gray-500">Loading...</div>
+        <div className="animate-pulse text-sm text-fira-primary fw-bold">
+          Loading...
+        </div>
       </div>
     );
   }

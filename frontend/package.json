@@ -12,6 +12,7 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.1.17",
     "axios": "^1.13.2",
+    "livekit-client": "^2.16.1",
     "lodash.throttle": "^4.1.1",
     "perfect-freehand": "^1.2.2",
     "react": "^19.2.0",

@@ -44,10 +44,16 @@ export function useWhiteboard(roomId) {
     });
 
     // snapshot
-    s.on("whiteboard-state", ({ elements: initialElements, title }) => {
-      setElements(initialElements || []);
-      if (typeof title === "string" && title.trim()) setTitle(title);
-    });
+    s.on(
+      "whiteboard-state",
+      ({ elements: initialElements, title, locks: initialLocks }) => {
+        setElements(initialElements || []);
+        if (typeof title === "string" && title.trim()) setTitle(title);
+        if (initialLocks && typeof initialLocks === "object") {
+          setLocks(initialLocks);
+        }
+      }
+    );
 
     // realtime element update
     s.on("element-update", ({ element }) => {
@@ -69,12 +75,23 @@ export function useWhiteboard(roomId) {
     });
 
     // cursor
-    s.on("cursor-position", ({ userId, x, y }) => {
+    s.on("cursor-position", ({ userId, x, y, username }) => {
+      if (!userId) return;
+
       setCursors((prev) => {
         const idx = prev.findIndex((c) => c.userId === userId);
         const next = [...prev];
-        if (idx === -1) next.push({ userId, x, y });
-        else next[idx] = { userId, x, y };
+
+        const item = {
+          userId,
+          username: username || "Unknown",
+          x,
+          y,
+        };
+
+        if (idx === -1) next.push(item);
+        else next[idx] = item;
+
         return next;
       });
     });
@@ -91,12 +108,15 @@ export function useWhiteboard(roomId) {
     });
 
     // remove data on disconnect (cursor + lock)
-    s.on("user-disconnected", ({ userId }) => {
-      setCursors((prev) => prev.filter((c) => c.userId !== userId));
+    s.on("user-disconnected", ({ userId, socketId }) => {
+      const ids = new Set([userId, socketId].filter(Boolean).map(String));
+      if (ids.size === 0) return;
+
+      setCursors((prev) => prev.filter((c) => !ids.has(String(c.userId))));
       setLocks((prev) => {
         const next = { ...prev };
         Object.keys(next).forEach((elId) => {
-          if (next[elId] === userId) delete next[elId];
+          if (ids.has(String(next[elId]))) delete next[elId];
         });
         return next;
       });
