@@ -98,6 +98,7 @@ export default function WhiteboardCanvas({
   onTitleChange,
   onMembersChange,
   onWhiteboardApi,
+  onConnectionStateChange,
 }) {
   const navigate = useNavigate();
 
@@ -164,11 +165,12 @@ export default function WhiteboardCanvas({
     role,
     canEdit,
     locked,
+    isHydrated,
     kickUser,
     setUserRole,
   } = useWhiteboard(roomId);
 
-  const wbBlocked = wbConnectionState !== "connected";
+  const wbBlocked = wbConnectionState !== "connected" || !isHydrated;
   const editDisabled = wbBlocked || !canEdit;
 
   // Default screen scale
@@ -253,6 +255,7 @@ export default function WhiteboardCanvas({
 
     showToast?.("Exported PNG", "success");
   }, [writingElementId, elements, myUserId, roomId, showToast]);
+
   // Lift room presence up to RoomLayout (for avatar list / sidebar)
   useEffect(() => {
     if (typeof onMembersChange === "function")
@@ -262,6 +265,12 @@ export default function WhiteboardCanvas({
   useEffect(() => {
     onWhiteboardApi?.({ kickUser, setUserRole, exportPng });
   }, [onWhiteboardApi, kickUser, setUserRole, exportPng]);
+
+  useEffect(() => {
+    if (typeof onConnectionStateChange === "function") {
+      onConnectionStateChange(wbConnectionState);
+    }
+  }, [wbConnectionState, onConnectionStateChange]);
 
   // Filter all active elements (remove soft delete one)
   const elementsActive = useMemo(() => {
@@ -1717,7 +1726,13 @@ export default function WhiteboardCanvas({
       {wbBlocked && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/10 backdrop-blur-[1px]">
           <div className="rounded-xl bg-white px-4 py-2 text-sm text-slate-700 shadow">
-            {wbConnectionState === "reconnecting" ? (
+            {wbConnectionState === "connected" && !isHydrated ? (
+              <LoadingModal
+                open={wbBlocked}
+                title="Loading"
+                subtitle="Syncing room data…"
+              />
+            ) : wbConnectionState === "reconnecting" ? (
               <LoadingModal
                 open={wbBlocked}
                 title="Reconnecting"

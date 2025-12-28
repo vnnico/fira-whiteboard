@@ -1,5 +1,11 @@
 import React, { useState } from "react";
-import { FiX, FiMic, FiMicOff, FiUserMinus } from "react-icons/fi";
+import {
+  FiX,
+  FiMic,
+  FiMicOff,
+  FiUserMinus,
+  FiHeadphones,
+} from "react-icons/fi";
 import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
 
 export default function ManagementSidebar({
@@ -10,6 +16,8 @@ export default function ManagementSidebar({
   myRole,
   onKick,
   onSetRole,
+  onMuteParticipant,
+  onToggleDeafenParticipant,
 }) {
   const [activeTab, setActiveTab] = useState("participants");
 
@@ -70,7 +78,7 @@ export default function ManagementSidebar({
                   </div>
 
                   <select
-                    value={voiceState.selectedAudioInputId || ""}
+                    value={voiceState.selectedAudioInputId || "default"}
                     onChange={(e) =>
                       voiceState.selectAudioInput?.(e.target.value)
                     }
@@ -99,8 +107,11 @@ export default function ManagementSidebar({
                   key={p.id}
                   participant={p}
                   myRole={myRole}
+                  voiceState={voiceState}
                   onKick={onKick}
                   onSetRole={onSetRole}
+                  onMuteParticipant={onMuteParticipant}
+                  onToggleDeafenParticipant={onToggleDeafenParticipant}
                 />
               ))}
             </div>
@@ -124,10 +135,43 @@ export default function ManagementSidebar({
   );
 }
 
-function ParticipantCard({ participant, myRole, onKick, onSetRole }) {
+function ParticipantCard({
+  participant,
+  myRole,
+  voiceState,
+  onKick,
+  onSetRole,
+  onMuteParticipant,
+  onToggleDeafenParticipant,
+}) {
+  const isOwner = myRole === "OWNER";
+  const isSelf = !!participant.isMe;
+
+  // Support both shapes:
+  // - participant.voice.{inVoice,micEnabled,deafened}
+  // - legacy: participant.isInVoice / participant.isMuted / participant.isDeafened
+  const v = participant.voice || {};
+  const inVoice =
+    typeof v.inVoice === "boolean" ? v.inVoice : !!participant.isInVoice;
+  const deafened =
+    typeof v.deafened === "boolean" ? v.deafened : !!participant.isDeafened;
+
+  const micEnabled =
+    typeof v.micEnabled === "boolean"
+      ? v.micEnabled
+      : typeof participant.isMuted === "boolean"
+      ? !participant.isMuted
+      : undefined;
+
+  const micKnown = typeof micEnabled === "boolean";
+  const isMuted = micKnown ? !micEnabled : false;
+
+  const canModerate = isOwner && !isSelf && inVoice;
+
   const initial = getInitials(participant.name, participant.id);
   const bg = getAvatarColor(participant.id);
-  const statusLabel = participant.isInVoice ? "In voice" : "Not in voice";
+  const statusLabel = inVoice ? "In voice" : "Not in voice";
+  const canSelfControl = isSelf && voiceState?.connectionState === "connected";
 
   return (
     <div className="flex items-center justify-between rounded-xl border border-slate-100 p-3 transition-colors hover:bg-slate-50">
@@ -148,18 +192,26 @@ function ParticipantCard({ participant, myRole, onKick, onSetRole }) {
         <div>
           <div className="text-sm font-medium text-slate-900">
             {participant.name}
-            {participant.isMe && (
+            {isSelf && (
               <span className="ml-2 text-xs text-slate-400">(You)</span>
             )}
           </div>
+
           <div className="text-[10px] uppercase tracking-wider text-slate-400">
             {statusLabel} • {participant.role ?? "participant"}
+            {inVoice && (
+              <>
+                {" "}
+                • {deafened ? "deafened" : "hearing"} •{" "}
+                {micKnown ? (isMuted ? "mic off" : "mic on") : "mic ?"}
+              </>
+            )}
           </div>
         </div>
       </div>
 
       <div className="flex gap-1">
-        {myRole === "OWNER" && !participant.isMe && (
+        {isOwner && !isSelf && (
           <select
             value={participant.role || "VIEWER"}
             onChange={(e) => onSetRole?.(participant.id, e.target.value)}
@@ -170,38 +222,164 @@ function ParticipantCard({ participant, myRole, onKick, onSetRole }) {
           </select>
         )}
 
-        {myRole === "OWNER" && !participant.isMe && (
+        {isSelf && (
           <button
-            className="rounded-md bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-700"
-            onClick={() => {
-              if (!confirm(`Kick ${participant.name}?`)) return;
-              // Emit via whiteboard socket (butuh akses)
-              onKick?.(participant.id);
-            }}
+            type="button"
+            onClick={() => voiceState?.toggleMic?.()}
+            disabled={!canSelfControl}
+            title={
+              !canSelfControl
+                ? "You are not connected to voice"
+                : voiceState?.isMicEnabled
+                ? "Turn mic off"
+                : "Turn mic on"
+            }
+            className={`rounded-lg p-2 transition-colors ${
+              !canSelfControl
+                ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                : voiceState?.isMicEnabled
+                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
           >
-            Kick
+            {voiceState?.isMicEnabled ? (
+              <FiMic size={16} />
+            ) : (
+              <FiMicOff size={16} />
+            )}
           </button>
         )}
 
-        <button
-          disabled
-          title="(Coming Soon)"
-          className={`rounded p-1.5 ${
-            participant.isMuted
-              ? "bg-rose-50 text-rose-500"
-              : "text-slate-400 hover:bg-slate-200"
-          }`}
-        >
-          {participant.isMuted ? <FiMicOff size={14} /> : <FiMic size={14} />}
-        </button>
-
-        {!participant.isMe && (
+        {isSelf && (
           <button
-            disabled
-            className="rounded p-1.5 text-slate-300 cursor-not-allowed"
-            title="(Coming Soon)"
+            type="button"
+            onClick={() => voiceState?.toggleDeafen?.()}
+            disabled={!canSelfControl}
+            title={
+              !canSelfControl
+                ? "You are not connected to voice"
+                : voiceState?.isDeafened
+                ? "Undeafen"
+                : "Deafen"
+            }
+            className={`rounded-lg p-2 transition-colors ${
+              !canSelfControl
+                ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                : voiceState?.isDeafened
+                ? "bg-slate-900 text-white hover:bg-slate-800"
+                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
           >
-            <FiUserMinus size={14} />
+            <FiHeadphones size={16} />
+          </button>
+        )}
+
+        {!isSelf && (
+          <>
+            {/* Mic */}
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={() => onMuteParticipant?.(participant.id)}
+                disabled={!canModerate || isMuted}
+                title={
+                  !inVoice
+                    ? "User is not in voice"
+                    : isMuted
+                    ? "Already muted"
+                    : "Mute participant"
+                }
+                className={`rounded-lg p-2 transition-colors ${
+                  !canModerate || isMuted
+                    ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                    : "bg-rose-50 text-rose-600 hover:bg-rose-100"
+                }`}
+              >
+                <FiMicOff size={16} />
+              </button>
+            ) : (
+              <div
+                className={`rounded-lg p-2 ${
+                  !inVoice
+                    ? "bg-slate-100 text-slate-300"
+                    : micKnown && micEnabled
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-slate-100 text-slate-500"
+                }`}
+                title={
+                  !inVoice
+                    ? "Not in voice"
+                    : micKnown
+                    ? micEnabled
+                      ? "Mic on"
+                      : "Mic off"
+                    : "Mic unknown"
+                }
+              >
+                {micKnown && micEnabled ? (
+                  <FiMic size={16} />
+                ) : (
+                  <FiMicOff size={16} />
+                )}
+              </div>
+            )}
+
+            {/* Headphone */}
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={() =>
+                  onToggleDeafenParticipant?.(participant.id, !deafened)
+                }
+                disabled={!canModerate}
+                title={
+                  !inVoice
+                    ? "User is not in voice"
+                    : deafened
+                    ? "Undeafen"
+                    : "Deafen"
+                }
+                className={`rounded-lg p-2 transition-colors ${
+                  !canModerate
+                    ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                    : deafened
+                    ? "bg-slate-900 text-white hover:bg-slate-800"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                }`}
+              >
+                <FiHeadphones size={16} />
+              </button>
+            ) : (
+              <div
+                className={`rounded-lg p-2 ${
+                  !inVoice
+                    ? "bg-slate-100 text-slate-300"
+                    : deafened
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-500"
+                }`}
+                title={
+                  !inVoice ? "Not in voice" : deafened ? "Deafened" : "Hearing"
+                }
+              >
+                <FiHeadphones size={16} />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Kick (OWNER only, not self) */}
+        {isOwner && !isSelf && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirm(`Kick ${participant.name}?`)) return;
+              onKick?.(participant.id);
+            }}
+            title="Kick"
+            className="rounded-lg p-2 bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+          >
+            <FiUserMinus size={16} />
           </button>
         )}
       </div>

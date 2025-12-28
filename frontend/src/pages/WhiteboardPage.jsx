@@ -12,6 +12,8 @@ export default function WhiteboardPage() {
   const { roomId } = useParams();
   const { isAuthenticated } = useAuth();
 
+  const [wbConnectionState, setWbConnectionState] = useState("disconnected");
+
   // Title
   const [title, setTitle] = useState("Untitled");
 
@@ -87,11 +89,13 @@ export default function WhiteboardPage() {
       kickUserFn={kickUserFn}
       setUserRoleFn={setUserRoleFn}
       onExportPngFn={onExportPngFn}
+      wbConnectionState={wbConnectionState}
     >
       <WhiteboardCanvas
         roomId={roomId}
         onTitleChange={setTitle}
         onMembersChange={setRoomMembers}
+        onConnectionStateChange={setWbConnectionState}
         onWhiteboardApi={({ kickUser, setUserRole, exportPng }) => {
           if (kickUser) setKickUserFn(() => kickUser);
           if (setUserRole) setSetUserRoleFn(() => setUserRole);

@@ -18,6 +18,7 @@ export default function RoomLayout({
   kickUserFn,
   setUserRoleFn,
   onExportPngFn,
+  wbConnectionState = "disconnected",
 }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const voiceState = useVoiceState({ roomId });
@@ -29,30 +30,52 @@ export default function RoomLayout({
   const voiceById = new Map(
     (voiceState?.participants || []).map((p) => [normId(p.id), p])
   );
+  const [voiceStateMap, setVoiceStateMap] = useState(() => new Map());
 
   const myId = normId(user?.id);
+  const lkById = new Map(
+    (voiceState?.participants || []).map((p) => [normId(p.id), p])
+  );
 
-  const participantsForUI =
-    Array.isArray(roomMembers) && roomMembers.length > 0
-      ? roomMembers.map((m) => {
-          const mid = normId(m.id);
-          const vp = voiceById.get(mid);
+  const hasJoinedWhiteboardRoom = Array.isArray(roomMembers)
+    ? roomMembers.some((m) => String(m?.id ?? m) === myId)
+    : false;
 
-          return {
-            id: mid,
-            name: m.username || m.name || mid,
-            isMe: myId ? mid === myId : false,
-            isInVoice: !!vp,
-            isMuted: vp ? !!vp.isMuted : true,
-            isSpeaking: vp ? !!vp.isSpeaking : false,
-            role: m.role,
-          };
-        })
-      : (voiceState?.participants || []).map((p) => ({
-          ...p,
-          id: normId(p.id),
-          isInVoice: true,
-        }));
+  //  Gating hanya untuk tombol Join (initial). Voice yang sudah connected tidak terpengaruh.
+  const canJoinVoice = Boolean(myId) && hasJoinedWhiteboardRoom;
+
+  const voiceByUserId = voiceState?.remoteVoiceStates || {};
+  const participantsForUI = (roomMembers || []).map((m) => {
+    const id = normId(m?.id ?? m);
+    const username = m?.username || m?.name || "Unknown";
+    const isMe = id === myId;
+
+    const v = voiceByUserId[id] || {};
+    const lk = lkById.get(id);
+
+    const micEnabled =
+      typeof v.micEnabled === "boolean"
+        ? v.micEnabled
+        : lk
+        ? !lk.isMuted
+        : undefined;
+
+    return {
+      ...m,
+      id,
+      name: username,
+      isMe,
+      isInVoice: !!v.inVoice,
+      isDeafened: !!v.deafened,
+      isMuted: typeof micEnabled === "boolean" ? !micEnabled : undefined,
+      isSpeaking: !!lk?.isSpeaking,
+      voice: {
+        inVoice: !!v.inVoice,
+        micEnabled,
+        deafened: !!v.deafened,
+      },
+    };
+  });
 
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -100,6 +123,11 @@ export default function RoomLayout({
       return;
     }
 
+    if (wbConnectionState !== "connected") {
+      prevParticipantsRef.current = next;
+      return;
+    }
+
     next.forEach((p, id) => {
       if (!prev.has(id)) {
         showToast(p.name + " joined", "info");
@@ -114,7 +142,7 @@ export default function RoomLayout({
     });
 
     prevParticipantsRef.current = next;
-  }, [participantsForUI, showToast]);
+  }, [participantsForUI, showToast, wbConnectionState]);
 
   useEffect(() => {
     let prevRole = prevMyRoleRef.current;
@@ -151,6 +179,88 @@ export default function RoomLayout({
     window.addEventListener("wb-kicked", onKicked);
     return () => window.removeEventListener("wb-kicked", onKicked);
   }, [leaveVoice, navigate]);
+
+  const participantsRef = useRef([]);
+  useEffect(() => {
+    participantsRef.current = participantsForUI;
+  }, [participantsForUI]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      const payload = e?.detail;
+      if (!payload) return;
+
+      // forward ke useVoiceState (target user akan memproses)
+      window.dispatchEvent(
+        new CustomEvent("voice-moderation", { detail: payload })
+      );
+
+      const action = String(payload.action || "");
+      const targetId = String(payload.targetUserId || "");
+      const actorId = String(payload.actorUserId || "");
+
+      window.dispatchEvent(
+        new CustomEvent("voice-moderation", { detail: payload })
+      );
+
+      // toast name lookup pakai ref agar tidak dependency-loop
+      const list = participantsRef.current || [];
+      const targetName =
+        list.find((p) => String(p.id) === targetId)?.name || "A participant";
+
+      if (targetId === myId) {
+        if (action === "mute") showToast("You were muted by the host", "info");
+
+        return;
+      }
+
+      if (actorId === myId) {
+        if (action === "mute") showToast(`Muted ${targetName}`, "info");
+      }
+    };
+
+    window.addEventListener("voice-moderation-raw", handler);
+    return () => window.removeEventListener("voice-moderation-raw", handler);
+  }, [myId, showToast]);
+
+  useEffect(() => {
+    const onSnapshot = (e) => {
+      const snap = e?.detail?.snapshot || {};
+      const next = new Map();
+      for (const [uid, st] of Object.entries(snap)) {
+        next.set(String(uid), {
+          inVoice: !!st?.inVoice,
+          deafened: !!st?.deafened,
+        });
+      }
+      setVoiceStateMap(next);
+    };
+
+    const onUpdate = (e) => {
+      const p = e?.detail;
+      if (!p?.userId) return;
+
+      const uid = String(p.userId);
+      setVoiceStateMap((prev) => {
+        const next = new Map(prev);
+        const cur = next.get(uid) || { inVoice: false, deafened: false };
+
+        next.set(uid, {
+          inVoice: typeof p.inVoice === "boolean" ? p.inVoice : !!cur.inVoice,
+          deafened:
+            typeof p.deafened === "boolean" ? p.deafened : !!cur.deafened,
+        });
+        return next;
+      });
+    };
+
+    window.addEventListener("voice-state-snapshot-raw", onSnapshot);
+    window.addEventListener("voice-state-raw", onUpdate);
+    return () => {
+      window.removeEventListener("voice-state-snapshot-raw", onSnapshot);
+      window.removeEventListener("voice-state-raw", onUpdate);
+    };
+  }, []);
 
   const handleTitleSubmit = async (e) => {
     e?.preventDefault();
@@ -323,6 +433,7 @@ export default function RoomLayout({
 
       <CommDock
         voiceState={voiceState}
+        canJoinVoice={canJoinVoice}
         onToggleChat={() => setIsSidebarOpen((prev) => !prev)}
       />
       <ManagementSidebar
@@ -333,6 +444,12 @@ export default function RoomLayout({
         myRole={myRole}
         onSetRole={(targetUserId, role) => setUserRoleFn?.(targetUserId, role)}
         onKick={(targetUserId) => kickUserFn?.(targetUserId)}
+        onMuteParticipant={(targetUserId) =>
+          voiceState?.ownerMuteParticipant?.(targetUserId)
+        }
+        onToggleDeafenParticipant={(targetUserId, deafened) =>
+          voiceState?.ownerSetDeafenParticipant?.(targetUserId, deafened)
+        }
       />
     </div>
   );

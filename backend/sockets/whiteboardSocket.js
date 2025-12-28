@@ -190,6 +190,8 @@ function emitPermissionsToUser(io, roomId, userId, role, canEdit, locked) {
   }
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export function registerWhiteboardHandlers(io, socket) {
   // Helper: dapatkan roomId dari payload atau dari socket.data
   const getRoomId = (roomId) => roomId ?? socket.data?.roomId;
@@ -219,6 +221,7 @@ export function registerWhiteboardHandlers(io, socket) {
     if (socket.user && socket.user.id) {
       addMember(roomId, socket.user.id);
 
+      await sleep(15000);
       // ensure role & send permission snapshot
       ensureRoleForUser(roomId, socket.user.id);
       const perms = getPermissionsForUser(roomId, socket.user.id);

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
-import { createToken } from "../services/voiceApi";
+import {
+  createToken,
+  moderateDeafen,
+  moderateMute,
+} from "../services/voiceApi";
+import { createVoiceSocket } from "../services/socketClient";
+import { useAuth } from "./useAuth";
 
 function buildParticipantUI(room) {
   const localIdentity = room.localParticipant.identity;
@@ -12,7 +18,6 @@ function buildParticipantUI(room) {
 
   return participants.map((p) => {
     const micPub = p.getTrackPublication?.(Track.Source.Microphone);
-
     const isMuted = micPub ? micPub.isMuted : true;
 
     return {
@@ -29,17 +34,45 @@ export function useVoiceState({ roomId }) {
   const [connectionState, setConnectionState] = useState("disconnected"); // disconnected|connecting|connected
   const [isMicEnabled, setIsMicEnabled] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [isInVoice, setIsInVoice] = useState(false);
+
   const [participants, setParticipants] = useState([]);
 
-  const [lastError, setLastError] = useState(null); // string | null
-  const [disconnectReason, setDisconnectReason] = useState(null); // string | null
+  const [lastError, setLastError] = useState(null);
+  const [disconnectReason, setDisconnectReason] = useState(null);
 
-  const tokenRefreshTimerRef = useRef(null);
-  const lastTokenRef = useRef(null);
-  const lastUrlRef = useRef(null);
-
+  const { token } = useAuth();
   // autoplay unblock indicator
   const [needsAudioStart, setNeedsAudioStart] = useState(false);
+
+  // voice moderation
+
+  const roomRef = useRef(null);
+
+  // /voice socket + remote states
+  const voiceSocketRef = useRef(null);
+  const [remoteVoiceStates, setRemoteVoiceStates] = useState({});
+
+  const isDeafenedRef = useRef(false);
+  useEffect(() => {
+    isDeafenedRef.current = isDeafened;
+  }, [isDeafened]);
+
+  const isInVoiceRef = useRef(false);
+  useEffect(() => {
+    isInVoiceRef.current = isInVoice;
+  }, [isInVoice]);
+
+  // Track audio elements yang di-attach supaya bisa dimute saat deafen
+  const remoteAudioElsRef = useRef(new Map());
+
+  const joinInFlightRef = useRef(false);
+
+  const lastLocalMicMutedRef = useRef(null);
+  const isMicEnabledRef = useRef(false);
+  useEffect(() => {
+    isMicEnabledRef.current = isMicEnabled;
+  }, [isMicEnabled]);
 
   // user-gesture call to allow audio playback
   const startAudioPlayback = useCallback(async () => {
@@ -50,6 +83,7 @@ export function useVoiceState({ roomId }) {
     setNeedsAudioStart(!room.canPlaybackAudio);
   }, []);
 
+  // Devices
   const [audioInputs, setAudioInputs] = useState([]);
   const [selectedAudioInputId, setSelectedAudioInputId] = useState(() => {
     return localStorage.getItem("voice.audioInputId") || "";
@@ -64,123 +98,71 @@ export function useVoiceState({ roomId }) {
     return inputs;
   }, []);
 
-  const clearTokenRefreshTimer = useCallback(() => {
-    if (tokenRefreshTimerRef.current) {
-      clearTimeout(tokenRefreshTimerRef.current);
-      tokenRefreshTimerRef.current = null;
-    }
-  }, []);
-
-  const getJwtExpMs = useCallback((jwt) => {
-    try {
-      const parts = jwt.split(".");
-      if (parts.length < 2) return null;
-
-      const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      const payload = JSON.parse(atob(b64));
-
-      if (!payload?.exp) return null;
-      return payload.exp * 1000;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const refreshTokenNow = useCallback(async () => {
-    const room = roomRef.current;
-    if (!room) return;
-    if (room.state !== "connected") return;
-
-    try {
-      const { token: newToken, url: newUrl } = await createToken(roomId);
-
-      lastTokenRef.current = newToken;
-      lastUrlRef.current = newUrl;
-
-      if (typeof room.refreshToken === "function") {
-        await room.refreshToken(newToken);
-        setLastError(null);
-        setDisconnectReason(null);
-        return newToken;
-      }
-
-      setLastError("SDK does not support refreshToken().");
-      return null;
-    } catch (e) {
-      console.error("Token refresh failed:", e);
-      setLastError(
-        "Token refresh failed. Please re-join voice if disconnected."
-      );
-      return null;
-    }
-  }, [roomId]);
-
-  const scheduleTokenRefresh = useCallback(
-    (token) => {
-      clearTokenRefreshTimer();
-
-      const expMs = getJwtExpMs(token);
-      if (!expMs) return;
-
-      const now = Date.now();
-      const refreshBeforeMs = 60_000;
-      const delay = expMs - now - refreshBeforeMs;
-
-      const safeDelay = Math.max(5_000, delay);
-
-      tokenRefreshTimerRef.current = setTimeout(async () => {
-        const newToken = await refreshTokenNow();
-        if (newToken) scheduleTokenRefresh(newToken);
-      }, safeDelay);
-    },
-    [clearTokenRefreshTimer, getJwtExpMs, refreshTokenNow]
-  );
   const selectAudioInput = useCallback(
     async (deviceId) => {
-      setSelectedAudioInputId(deviceId || "");
-      localStorage.setItem("voice.audioInputId", deviceId || "");
-
       const room = roomRef.current;
-      if (!room) return;
+
+      setSelectedAudioInputId(deviceId || "");
+
+      if (!room) {
+        if (!deviceId || deviceId === "default") {
+          localStorage.removeItem("voice.audioInputId");
+        } else {
+          localStorage.setItem("voice.audioInputId", deviceId);
+        }
+        return;
+      }
+
+      const pickFallback = async () => {
+        const inputs = (await refreshDevices()) || [];
+        return inputs.find(
+          (d) =>
+            d.deviceId &&
+            d.deviceId !== "default" &&
+            d.deviceId !== "communications"
+        );
+      };
 
       try {
         if (!deviceId || deviceId === "default") {
-          const inputs = await refreshDevices();
-          const fallback = inputs.find(
-            (d) =>
-              d.deviceId &&
-              d.deviceId !== "default" &&
-              d.deviceId !== "communications"
-          );
+          localStorage.removeItem("voice.audioInputId");
 
+          try {
+            await room.switchActiveDevice("audioinput", "default");
+            setSelectedAudioInputId("default");
+            return;
+          } catch {}
+
+          const fallback = await pickFallback();
           if (fallback?.deviceId) {
             await room.switchActiveDevice("audioinput", fallback.deviceId);
             setSelectedAudioInputId(fallback.deviceId);
             localStorage.setItem("voice.audioInputId", fallback.deviceId);
+          } else {
+            setSelectedAudioInputId("default");
           }
           return;
         }
 
         await room.switchActiveDevice("audioinput", deviceId);
+        localStorage.setItem("voice.audioInputId", deviceId);
       } catch (e) {
         console.error("switchActiveDevice(audioinput) failed:", e);
 
         try {
-          const inputs = await refreshDevices();
-          const fallback = inputs.find(
-            (d) =>
-              d.deviceId &&
-              d.deviceId !== "default" &&
-              d.deviceId !== "communications"
-          );
-
+          const fallback = await pickFallback();
           if (fallback?.deviceId) {
             await room.switchActiveDevice("audioinput", fallback.deviceId);
             setSelectedAudioInputId(fallback.deviceId);
             localStorage.setItem("voice.audioInputId", fallback.deviceId);
+          } else {
+            setSelectedAudioInputId("default");
+            localStorage.removeItem("voice.audioInputId");
           }
         } catch (e2) {
           console.error("fallback switch input failed:", e2);
+          setSelectedAudioInputId("default");
+          localStorage.removeItem("voice.audioInputId");
         }
       }
     },
@@ -197,10 +179,148 @@ export function useVoiceState({ roomId }) {
       navigator.mediaDevices?.removeEventListener?.("devicechange", handler);
   }, [refreshDevices]);
 
-  const roomRef = useRef(null);
+  const cleanupRemoteAudioEls = useCallback(() => {
+    const map = remoteAudioElsRef.current;
+    map.forEach((el) => {
+      try {
+        el.remove();
+      } catch {}
+    });
+    map.clear();
+  }, []);
 
-  // Track audio elements yang di-attach supaya bisa dimute saat deafen
-  const audioElsRef = useRef(new Map()); // trackSid -> HTMLMediaElement
+  const setAllRemoteAudioMuted = useCallback((muted) => {
+    for (const el of remoteAudioElsRef.current.values()) {
+      el.muted = muted;
+    }
+  }, []);
+
+  const getTrackKey = useCallback((track, publication) => {
+    return String(
+      publication?.trackSid ||
+        publication?.sid ||
+        track?.sid ||
+        `${publication?.kind || track?.kind}-${Date.now()}`
+    );
+  }, []);
+
+  // Emit local UI voice state to /voice socket
+  const emitLocalVoiceState = useCallback(
+    (patch = {}) => {
+      const s = voiceSocketRef.current;
+      if (!s || !roomId) return;
+
+      s.emit("voice:state", {
+        roomId: String(roomId),
+        inVoice:
+          typeof patch.inVoice === "boolean"
+            ? patch.inVoice
+            : isInVoiceRef.current,
+        micEnabled:
+          typeof patch.micEnabled === "boolean"
+            ? patch.micEnabled
+            : isMicEnabledRef.current,
+        deafened:
+          typeof patch.deafened === "boolean"
+            ? patch.deafened
+            : isDeafenedRef.current,
+      });
+    },
+    [roomId]
+  );
+
+  // Connect /voice socket once per roomId
+  useEffect(() => {
+    if (!roomId) return;
+
+    const s = createVoiceSocket(token);
+    voiceSocketRef.current = s;
+
+    s.on("connect", () => {
+      s.emit("join-room", { roomId: String(roomId) });
+
+      s.emit("voice:state", {
+        roomId: String(roomId),
+        inVoice: false,
+        micEnabled: false,
+        deafened: false,
+      });
+    });
+
+    s.on("voice-state-snapshot", ({ snapshot }) => {
+      if (!snapshot || typeof snapshot !== "object") return;
+      setRemoteVoiceStates(snapshot);
+    });
+
+    s.on("voice:state", ({ userId, inVoice, micEnabled, deafened }) => {
+      if (!userId) return;
+      setRemoteVoiceStates((prev) => ({
+        ...prev,
+        [String(userId)]: {
+          inVoice: !!inVoice,
+          micEnabled: !!micEnabled,
+          deafened: !!deafened,
+        },
+      }));
+    });
+
+    // Apply moderation to LIVEKIT locally (privacy rule enforced)
+    s.on("voice-moderation", async (payload) => {
+      if (!payload) return;
+
+      const room = roomRef.current;
+      const myId = String(room?.localParticipant?.identity || "");
+      if (!room || !myId) return;
+
+      const action = String(payload.action || "");
+      const targetId = String(payload.targetUserId || "");
+      if (!targetId || targetId !== myId) return;
+
+      if (action === "mute") {
+        try {
+          await room.localParticipant.setMicrophoneEnabled(false);
+        } catch {}
+        setIsMicEnabled(false);
+        emitLocalVoiceState({ micEnabled: false });
+        return;
+      }
+
+      if (action === "deafen") {
+        isDeafenedRef.current = true;
+        setIsDeafened(true);
+        setAllRemoteAudioMuted(true);
+
+        try {
+          await room.localParticipant.setMicrophoneEnabled(false);
+        } catch {}
+        setIsMicEnabled(false);
+
+        emitLocalVoiceState({ deafened: true, micEnabled: false });
+        return;
+      }
+
+      if (action === "undeafen") {
+        isDeafenedRef.current = false;
+        setIsDeafened(false);
+        setAllRemoteAudioMuted(false);
+
+        try {
+          await room.localParticipant.setMicrophoneEnabled(false);
+        } catch {}
+        setIsMicEnabled(false);
+
+        emitLocalVoiceState({ deafened: false, micEnabled: false });
+        return;
+      }
+    });
+
+    return () => {
+      try {
+        s.disconnect();
+      } catch {}
+      voiceSocketRef.current = null;
+    };
+  }, [roomId, emitLocalVoiceState, setAllRemoteAudioMuted]);
 
   const syncParticipants = useCallback(() => {
     const room = roomRef.current;
@@ -208,111 +328,172 @@ export function useVoiceState({ roomId }) {
       setParticipants([]);
       return;
     }
-    setParticipants(buildParticipantUI(room));
-  }, []);
 
-  const setAllRemoteAudioMuted = useCallback((muted) => {
-    for (const el of audioElsRef.current.values()) {
-      el.muted = muted;
+    setParticipants(buildParticipantUI(room));
+
+    // reconcile local mic state from LiveKit publication (prevents drift)
+    const micPub = room.localParticipant.getTrackPublication?.(
+      Track.Source.Microphone
+    );
+    const isMuted = micPub ? micPub.isMuted : true;
+
+    if (lastLocalMicMutedRef.current !== isMuted) {
+      lastLocalMicMutedRef.current = isMuted;
+      const nextMicEnabled = !isMuted;
+      setIsMicEnabled(nextMicEnabled);
+
+      // keep UI sync to others if we're in voice
+      if (isInVoiceRef.current) {
+        emitLocalVoiceState({ inVoice: true, micEnabled: nextMicEnabled });
+      }
     }
-  }, []);
+  }, [emitLocalVoiceState]);
 
   const leaveVoice = useCallback(async () => {
-    const room = roomRef.current;
-    roomRef.current = null;
-
     try {
-      if (room) {
-        room.disconnect();
-      }
-    } finally {
-      // cleanup audio elements
-      clearTokenRefreshTimer();
-      for (const el of audioElsRef.current.values()) {
-        try {
-          el.remove();
-        } catch {
-          // ignore
-        }
-      }
-      audioElsRef.current.clear();
+      joinInFlightRef.current = false;
+
+      const room = roomRef.current;
+      roomRef.current = null;
 
       setConnectionState("disconnected");
-      setIsMicEnabled(false);
-      setIsDeafened(false);
-      setParticipants([]);
       setNeedsAudioStart(false);
+      setDisconnectReason(null);
+
+      setIsInVoice(false);
+      isInVoiceRef.current = false;
+
+      setIsDeafened(false);
+      isDeafenedRef.current = false;
+
+      setIsMicEnabled(false);
+
+      if (room) {
+        try {
+          await room.localParticipant.setMicrophoneEnabled(false);
+        } catch {}
+
+        try {
+          room.disconnect();
+        } catch {}
+      }
+    } finally {
+      emitLocalVoiceState({
+        inVoice: false,
+        micEnabled: false,
+        deafened: false,
+      });
+      cleanupRemoteAudioEls();
+      setParticipants([]);
     }
-  }, [clearTokenRefreshTimer]);
+  }, [cleanupRemoteAudioEls, emitLocalVoiceState]);
 
   const joinVoice = useCallback(async () => {
     if (!roomId) return;
     if (connectionState !== "disconnected") return;
 
+    if (joinInFlightRef.current) return;
+    joinInFlightRef.current = true;
+
+    setLastError(null);
+    setDisconnectReason(null);
     setConnectionState("connecting");
+
+    cleanupRemoteAudioEls();
+
+    let room = null;
 
     try {
       const { token, url } = await createToken(roomId);
-      lastTokenRef.current = token;
-      lastUrlRef.current = url;
-      setLastError(null);
-      setDisconnectReason(null);
 
-      const room = new Room({
-        // default autoSubscribe true
-      });
+      room = new Room({});
 
-      // events
       room.on(RoomEvent.ParticipantConnected, syncParticipants);
       room.on(RoomEvent.ParticipantDisconnected, syncParticipants);
       room.on(RoomEvent.TrackMuted, syncParticipants);
       room.on(RoomEvent.TrackUnmuted, syncParticipants);
       room.on(RoomEvent.ActiveSpeakersChanged, syncParticipants);
 
-      room.on(RoomEvent.TrackSubscribed, (track) => {
-        // Attach audio tracks so we can hear others
-        if (track.kind === Track.Kind.Audio) {
+      room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        try {
+          if (!track || track.kind !== "audio") return;
+
+          const key = getTrackKey(track, publication);
+          const map = remoteAudioElsRef.current;
+
+          if (map.has(key)) return;
+
           const el = track.attach();
           el.autoplay = true;
-          el.muted = isDeafened; // apply deafen state
+          el.playsInline = true;
+          el.muted = isDeafenedRef.current;
           el.style.display = "none";
+          el.dataset.lkTrackKey = key;
+          el.dataset.lkParticipant = String(participant?.identity || "");
+
           document.body.appendChild(el);
-
-          audioElsRef.current.set(track.sid, el);
+          map.set(key, el);
+        } catch (e) {
+          setLastError("Failed to attach remote audio track.");
         }
       });
 
-      room.on(RoomEvent.TrackUnsubscribed, (track) => {
-        if (track.kind === Track.Kind.Audio) {
-          const el = audioElsRef.current.get(track.sid);
+      room.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+        try {
+          if (!track || track.kind !== "audio") return;
+
+          const key = getTrackKey(track, publication);
+          const map = remoteAudioElsRef.current;
+
+          const el = map.get(key);
           if (el) {
-            audioElsRef.current.delete(track.sid);
+            try {
+              track.detach(el);
+            } catch {}
             el.remove();
+            map.delete(key);
+            return;
           }
-          track.detach();
-        }
+
+          const detached = track.detach();
+          detached.forEach((node) => {
+            try {
+              node.remove();
+            } catch {}
+          });
+        } catch {}
       });
 
-      // Show "connecting" during LiveKit reconnect
       room.on(RoomEvent.Reconnecting, () => {
         setConnectionState("connecting");
       });
 
-      // Back to connected after reconnect
       room.on(RoomEvent.Reconnected, () => {
         setConnectionState("connected");
         syncParticipants();
       });
 
-      // If disconnected, reflect it in UI (we do NOT auto-join)
       room.on(RoomEvent.Disconnected, (reason) => {
         setConnectionState("disconnected");
         setNeedsAudioStart(false);
-        clearTokenRefreshTimer();
         setDisconnectReason(String(reason || "unknown"));
 
-        // bersihkan roomRef supaya UI tidak pegang room yang sudah mati
         roomRef.current = null;
+        cleanupRemoteAudioEls();
+
+        setIsInVoice(false);
+        isInVoiceRef.current = false;
+
+        setIsDeafened(false);
+        isDeafenedRef.current = false;
+
+        setIsMicEnabled(false);
+
+        emitLocalVoiceState({
+          inVoice: false,
+          micEnabled: false,
+          deafened: false,
+        });
 
         if (
           String(reason || "")
@@ -326,7 +507,6 @@ export function useVoiceState({ roomId }) {
         }
       });
 
-      // Autoplay policy handling
       room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
         setNeedsAudioStart(!room.canPlaybackAudio);
       });
@@ -334,22 +514,30 @@ export function useVoiceState({ roomId }) {
       await room.connect(url, token);
       roomRef.current = room;
 
-      // Default: masuk dalam keadaan mute (mic belum publish)
       setConnectionState("connected");
-
-      scheduleTokenRefresh(token);
-
-      // initial autoplay state
       setNeedsAudioStart(!room.canPlaybackAudio);
 
+      // Default: masuk keadaan mic OFF, deafen OFF
       setIsMicEnabled(false);
+
       setIsDeafened(false);
+      isDeafenedRef.current = false;
+      setAllRemoteAudioMuted(false);
+
+      setIsInVoice(true);
+      isInVoiceRef.current = true;
+
+      emitLocalVoiceState({
+        inVoice: true,
+        micEnabled: false,
+        deafened: false,
+      });
 
       syncParticipants();
-      // Refresh device list (labels muncul setelah permission mic diberikan)
+
       try {
         const inputs = await refreshDevices();
-        const exists = inputs.some((d) => d.deviceId === selectedAudioInputId);
+        const exists = inputs?.some((d) => d.deviceId === selectedAudioInputId);
 
         if (
           selectedAudioInputId &&
@@ -361,44 +549,68 @@ export function useVoiceState({ roomId }) {
           setSelectedAudioInputId("");
           localStorage.removeItem("voice.audioInputId");
         }
-      } catch (e) {
-        // ignore untuk demo; device list bisa gagal di beberapa browser tanpa permission
-      }
+      } catch {}
     } catch (err) {
       console.error(err);
-      await leaveVoice();
+      try {
+        room?.disconnect();
+      } catch {}
+
+      roomRef.current = null;
+      cleanupRemoteAudioEls();
+
+      setConnectionState("disconnected");
+      setNeedsAudioStart(false);
+      setDisconnectReason("failed-to-join");
+      setLastError("Failed to join voice. Please try again.");
+
+      setIsInVoice(false);
+      isInVoiceRef.current = false;
+      emitLocalVoiceState({
+        inVoice: false,
+        micEnabled: false,
+        deafened: false,
+      });
+    } finally {
+      joinInFlightRef.current = false;
     }
   }, [
     roomId,
     connectionState,
-    isDeafened,
     syncParticipants,
-    leaveVoice,
     refreshDevices,
     selectedAudioInputId,
-    scheduleTokenRefresh,
-    clearTokenRefreshTimer,
+    cleanupRemoteAudioEls,
+    getTrackKey,
+    emitLocalVoiceState,
+    setAllRemoteAudioMuted,
   ]);
 
   const toggleMic = useCallback(async () => {
     const room = roomRef.current;
     if (!room) return;
 
-    // Jika user menyalakan mic saat deafened, kita auto-undeafen (sesuai pola mock Anda)
-    if (isDeafened) {
+    // Kalau user menyalakan mic saat deafened, auto-undeafen
+    if (isDeafenedRef.current) {
+      isDeafenedRef.current = false;
       setIsDeafened(false);
       setAllRemoteAudioMuted(false);
     }
 
     const next = !isMicEnabled;
+
     try {
       await room.localParticipant.setMicrophoneEnabled(next);
       setIsMicEnabled(next);
+      emitLocalVoiceState({
+        inVoice: true,
+        micEnabled: next,
+        deafened: isDeafenedRef.current,
+      });
       syncParticipants();
     } catch (err) {
       console.error("toggleMic failed:", err);
 
-      // Fallback khusus OverconstrainedError / NotFoundError (device invalid)
       const name = err?.name || "";
       if (
         next === true &&
@@ -407,15 +619,11 @@ export function useVoiceState({ roomId }) {
           name === "NotReadableError")
       ) {
         try {
-          // reset to default device
           setSelectedAudioInputId("");
           localStorage.removeItem("voice.audioInputId");
 
-          // LiveKit: switch to default by omitting deviceId
-          // Cara paling aman: pilih device pertama yang tersedia, atau biarkan default
-          await refreshDevices();
           const inputs = await refreshDevices();
-          const fallback = inputs.find(
+          const fallback = inputs?.find(
             (d) =>
               d.deviceId &&
               d.deviceId !== "default" &&
@@ -428,25 +636,26 @@ export function useVoiceState({ roomId }) {
             localStorage.setItem("voice.audioInputId", fallback.deviceId);
           }
 
-          // retry publish mic
           await room.localParticipant.setMicrophoneEnabled(true);
           setIsMicEnabled(true);
+          emitLocalVoiceState({
+            inVoice: true,
+            micEnabled: true,
+            deafened: isDeafenedRef.current,
+          });
           syncParticipants();
           return;
         } catch (e2) {
           console.error("toggleMic fallback failed:", e2);
         }
       }
-
-      // kalau tetap gagal, jangan ubah state isMicEnabled
     }
   }, [
     isMicEnabled,
-    isDeafened,
+    refreshDevices,
     setAllRemoteAudioMuted,
     syncParticipants,
-    refreshDevices,
-    // audioInputs,
+    emitLocalVoiceState,
   ]);
 
   const toggleDeafen = useCallback(async () => {
@@ -455,17 +664,44 @@ export function useVoiceState({ roomId }) {
 
     const next = !isDeafened;
 
+    isDeafenedRef.current = next;
     setIsDeafened(next);
     setAllRemoteAudioMuted(next);
 
-    // Deafen => mic off (meniru mock state Anda)
     if (next && isMicEnabled) {
-      await room.localParticipant.setMicrophoneEnabled(false);
+      try {
+        await room.localParticipant.setMicrophoneEnabled(false);
+      } catch {}
       setIsMicEnabled(false);
+      emitLocalVoiceState({ inVoice: true, deafened: true, micEnabled: false });
+    } else {
+      emitLocalVoiceState({ inVoice: true, deafened: next });
     }
 
     syncParticipants();
-  }, [isDeafened, isMicEnabled, setAllRemoteAudioMuted, syncParticipants]);
+  }, [
+    isDeafened,
+    isMicEnabled,
+    setAllRemoteAudioMuted,
+    syncParticipants,
+    emitLocalVoiceState,
+  ]);
+
+  const ownerMuteParticipant = useCallback(
+    async (targetUserId) => {
+      if (!roomId || !targetUserId) return;
+      await moderateMute(String(roomId), String(targetUserId));
+    },
+    [roomId]
+  );
+
+  const ownerSetDeafenParticipant = useCallback(
+    async (targetUserId, deafened) => {
+      if (!roomId || !targetUserId) return;
+      await moderateDeafen(String(roomId), String(targetUserId), !!deafened);
+    },
+    [roomId]
+  );
 
   // Cleanup kalau komponen unmount
   useEffect(() => {
@@ -477,8 +713,10 @@ export function useVoiceState({ roomId }) {
   return useMemo(
     () => ({
       connectionState,
+      isInVoice,
       isMicEnabled,
       isDeafened,
+
       joinVoice,
       leaveVoice,
       toggleMic,
@@ -492,9 +730,13 @@ export function useVoiceState({ roomId }) {
       refreshDevices,
       lastError,
       disconnectReason,
+      ownerMuteParticipant,
+      ownerSetDeafenParticipant,
+      remoteVoiceStates,
     }),
     [
       connectionState,
+      isInVoice,
       isMicEnabled,
       isDeafened,
       joinVoice,
@@ -510,6 +752,9 @@ export function useVoiceState({ roomId }) {
       refreshDevices,
       lastError,
       disconnectReason,
+      ownerMuteParticipant,
+      ownerSetDeafenParticipant,
+      remoteVoiceStates,
     ]
   );
 }

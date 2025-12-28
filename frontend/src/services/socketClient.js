@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-const SERVER_URL = "http://localhost:3001";
+const SERVER_URL = "http://192.168.1.101:3001";
 
 export function createChatSocket(token) {
   return io(`${SERVER_URL}/chat`, {
@@ -19,5 +19,12 @@ export function createWhiteboardSocket(token) {
 export function createCallSocket(token) {
   return io(`${SERVER_URL}/call`, {
     auth: { token },
+  });
+}
+
+export function createVoiceSocket(token) {
+  return io(`${SERVER_URL}/voice`, {
+    auth: { token },
+    transports: ["websocket"],
   });
 }

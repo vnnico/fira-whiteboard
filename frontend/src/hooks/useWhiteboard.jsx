@@ -12,6 +12,13 @@ export function useWhiteboard(roomId) {
   const [elements, setElements] = useState([]);
   const [connectionState, setConnectionState] = useState("disconnected");
 
+  // Hydration.
+  // States which need to hold the modal until initial data eventually hydrated.
+  const [isHydrated, setIsHydrated] = useState(false);
+  const gotBoardStateRef = useRef(false);
+  const gotMembersRef = useRef(false);
+  const gotPermsRef = useRef(false);
+
   const [locks, setLocks] = useState({}); // elementId -> userId
   const [cursors, setCursors] = useState([]); // [{userId,x,y}]
 
@@ -37,9 +44,23 @@ export function useWhiteboard(roomId) {
     const s = createWhiteboardSocket(token);
     setConnectionState("reconnecting");
 
-    s.on("connect", () => {
-      setConnectionState("connected");
+    const tryMarkHydrated = () => {
+      if (
+        gotBoardStateRef.current &&
+        gotMembersRef.current &&
+        gotPermsRef.current
+      ) {
+        setIsHydrated(true);
+      }
+    };
 
+    s.on("connect", () => {
+      // reset hydration on every (re)connect
+      gotBoardStateRef.current = false;
+      gotMembersRef.current = false;
+      gotPermsRef.current = false;
+      setIsHydrated(false);
+      setConnectionState("connected");
       s.emit("join-room", { roomId });
     });
 
@@ -52,6 +73,9 @@ export function useWhiteboard(roomId) {
         if (initialLocks && typeof initialLocks === "object") {
           setLocks(initialLocks);
         }
+
+        gotBoardStateRef.current = true;
+        tryMarkHydrated();
       }
     );
 
@@ -132,6 +156,9 @@ export function useWhiteboard(roomId) {
       if (role) setRole(role);
       setCanEdit(!!canEdit);
       setLocked(!!locked);
+
+      gotPermsRef.current = true;
+      tryMarkHydrated();
     });
 
     // server-side enforcement feedback
@@ -145,6 +172,9 @@ export function useWhiteboard(roomId) {
     // room presence (who is in the room)
     s.on("room-members", ({ members }) => {
       setRoomMembers(Array.isArray(members) ? members : []);
+
+      gotMembersRef.current = true;
+      tryMarkHydrated();
     });
 
     s.on("disconnect", (reason) => {
@@ -174,6 +204,7 @@ export function useWhiteboard(roomId) {
       setRole("VIEWER");
       setCanEdit(false);
       setLocked(false);
+      setIsHydrated(false);
     };
   }, [roomId, token]);
 
@@ -214,6 +245,8 @@ export function useWhiteboard(roomId) {
       role,
       canEdit,
       locked,
+      isHydrated,
+
       // mouseMove: kirim draft
       sendDraftElement: (element) => {
         if (!canEdit) return;
