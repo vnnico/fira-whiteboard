@@ -14,19 +14,16 @@ function signToken(user) {
   });
 }
 
-// POST /api/auth/login
 export async function login(req, res, next) {
   try {
     const { username, password } = req.body;
 
-    await sleep(3000);
+    const user = await findByUsername(username);
 
-    const user = findByUsername(username);
+    console.log(user);
     if (!user || user.password !== password) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
-
-    // jika displayName belum ada format User-xxxxxx, generate
     if (!user.displayName?.startsWith("User-")) {
       user.displayName = generateRandomDisplayName();
     }
@@ -46,10 +43,9 @@ export async function login(req, res, next) {
   }
 }
 
-// GET /api/auth/me
 export async function getMe(req, res, next) {
   try {
-    const user = findById(req.user.id);
+    const user = await findById(req.user.id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }

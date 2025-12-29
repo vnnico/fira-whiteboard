@@ -1,6 +1,5 @@
 import { updateDisplayName } from "../models/userModel.js";
 
-// PATCH /api/users/me/display-name
 export async function updateMyDisplayName(req, res, next) {
   try {
     const { displayName } = req.body;

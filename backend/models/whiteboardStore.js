@@ -1,182 +1,227 @@
-// src/models/whiteboardStore.js
 import { randomUUID } from "crypto";
+import { Board, Roles as RoleEnum } from "./whiteboardModel.js";
 
 const boards = new Map();
-// key: roomId, value: { roomId, createdBy, createdAt, elements: [] }
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const persistQueueByRoom = new Map();
 
-export const Roles = Object.freeze({
-  OWNER: "OWNER",
-  EDITOR: "EDITOR",
-  VIEWER: "VIEWER",
-});
+export const Roles = RoleEnum;
 
 const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.VIEWER;
 
-function ensureBoard(roomId) {
-  let board = boards.get(roomId);
+function normalizeBoard(raw) {
+  if (!raw) return null;
 
-  if (!board) {
-    board = {
-      roomId,
-      title: "Untitled Whiteboard",
-      createdBy: null,
-      members: [],
-      createdAt: new Date(),
-      elements: [],
-      roles: {},
-      locked: false,
-    };
-    boards.set(roomId, board);
+  const board = {
+    roomId: String(raw.roomId),
+    title: raw.title || "Untitled Whiteboard",
+    createdBy: raw.createdBy ? String(raw.createdBy) : null,
+    members: Array.isArray(raw.members) ? raw.members.map(String) : [],
+    roles: raw.roles && typeof raw.roles === "object" ? raw.roles : {},
+    locked: typeof raw.locked === "boolean" ? raw.locked : false,
+    elements: Array.isArray(raw.elements) ? raw.elements : [],
+    createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(),
+    updatedAt: raw.updatedAt ? new Date(raw.updatedAt) : new Date(),
+  };
+
+  const normRoles = {};
+  for (const [k, v] of Object.entries(board.roles || {})) {
+    normRoles[String(k)] = v;
   }
-
-  if (!board.title) board.title = "Untitled Whiteboard";
-  if (!Array.isArray(board.members)) board.members = [];
-  if (!Array.isArray(board.elements)) board.elements = [];
-  if (!board.roles || typeof board.roles !== "object") board.roles = {};
-  if (typeof board.locked !== "boolean") board.locked = false;
+  board.roles = normRoles;
 
   return board;
 }
+
+function touch(board) {
+  board.updatedAt = new Date();
+}
+
+async function persistBoardNow(board) {
+  const doc = {
+    roomId: board.roomId,
+    title: board.title,
+    createdBy: board.createdBy,
+    members: board.members,
+    roles: board.roles,
+    locked: board.locked,
+    elements: board.elements,
+    schemaVersion: 1,
+    updatedAt: board.updatedAt,
+  };
+
+  await Board.updateOne(
+    { roomId: board.roomId },
+    {
+      $set: doc,
+      $setOnInsert: { createdAt: board.createdAt },
+    },
+    { upsert: true }
+  );
+}
+
+function schedulePersist(board) {
+  const rid = board?.roomId;
+  if (!rid) return;
+
+  const prev = persistQueueByRoom.get(rid) || Promise.resolve();
+  const next = prev
+    .then(() => persistBoardNow(board))
+    .catch((err) => console.error("[whiteboardStore] persist error:", err));
+
+  persistQueueByRoom.set(rid, next);
+}
+
+// startup loader
+export async function initWhiteboardStore() {
+  const docs = await Board.find({}).lean();
+  for (const doc of docs) {
+    const b = normalizeBoard(doc);
+    if (b?.roomId) boards.set(b.roomId, b);
+  }
+  console.log(`[whiteboardStore] loaded boards from DB: ${boards.size}`);
+}
+
 export async function createBoard({ createdBy }) {
   const roomId = randomUUID();
   const ownerId = createdBy ? String(createdBy) : null;
+  const now = new Date();
 
-  await sleep(5000);
-
-  console.log("Creating board...");
-  const board = {
+  const board = normalizeBoard({
     roomId,
     title: "Untitled Whiteboard",
-    createdBy: createdBy || null,
-    members: createdBy ? [createdBy] : [],
-    createdAt: new Date(),
-    elements: [],
+    createdBy: ownerId,
+    members: ownerId ? [ownerId] : [],
     roles: ownerId ? { [ownerId]: Roles.OWNER } : {},
     locked: false,
-  };
+    elements: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+
   boards.set(roomId, board);
-  console.log("Done");
-  console.log(board);
+  await persistBoardNow(board);
   return board;
 }
 
-// ambil semua board
 export function getAllBoards() {
   return Array.from(boards.values());
 }
 
-// kalau butuh 1 board by roomId, bisa tambah ini:
 export function getBoardById(roomId) {
-  return boards.get(roomId) || null;
+  return boards.get(String(roomId || "")) || null;
 }
 
-// Fungsi untuk update title
+export async function loadBoardFromDb(roomId) {
+  const rid = String(roomId || "");
+  if (!rid) return null;
+
+  const doc = await Board.findOne({ roomId: rid }).lean();
+  if (!doc) return null;
+
+  const b = normalizeBoard(doc);
+  boards.set(rid, b);
+  return b;
+}
+
 export function updateBoardTitle(roomId, newTitle) {
-  const board = boards.get(roomId);
-  if (board) {
-    board.title = newTitle;
-  }
+  const board = getExistingBoard(roomId);
+  if (!board) return null;
+
+  board.title = newTitle || "Untitled Whiteboard";
+  touch(board);
+  schedulePersist(board);
   return board;
+}
+
+function getExistingBoard(roomId) {
+  return boards.get(String(roomId)) || null;
 }
 
 export function addMember(roomId, userId) {
-  const board = ensureBoard(roomId);
-  if (!userId) return board;
-
-  if (!board.members.includes(userId)) {
-    board.members.push(userId);
-  }
-
-  // ensure role
-  ensureRoleForUser(roomId, userId);
-
-  console.log("*******");
-  console.log("Add new member: ", userId);
-  console.log("Current boards: ", board);
-  console.log("*******");
-  return board;
-}
-
-export function removeMemberAndRole(roomId, userId) {
-  const board = ensureBoard(roomId);
-  if (!userId) return board;
+  const board = getExistingBoard(roomId);
+  if (!board || !userId) return board;
 
   const uid = String(userId);
+  if (!board.members.includes(uid)) board.members.push(uid);
 
-  // Jangan hapus OWNER (createdBy)
-  if (board.createdBy && String(board.createdBy) === uid) {
-    return board;
-  }
+  ensureRoleForUser(roomId, uid);
 
-  // Hapus dari members
-  board.members = (board.members || []).filter((m) => String(m) !== uid);
-
-  // Hapus role agar reset ke default saat join lagi
-  if (board.roles && board.roles[uid]) {
-    delete board.roles[uid];
-  }
-
+  touch(board);
+  schedulePersist(board);
   return board;
 }
 
-/**
- * Pastikan user punya role di board:
- * - createdBy => OWNER
- * - selain itu default VIEWER (minimal untuk demo)
- */
+// keep for “remove permanently”, jangan dipakai untuk disconnect/kick
+export function removeMemberAndRole(roomId, userId) {
+  const board = getExistingBoard(roomId);
+  if (!board || userId === null || userId === undefined) return board;
+
+  const uid = String(userId);
+  if (board.createdBy && String(board.createdBy) === uid) return board;
+
+  board.members = (board.members || []).filter((m) => String(m) !== uid);
+  if (board.roles && board.roles[uid]) delete board.roles[uid];
+
+  touch(board);
+  schedulePersist(board);
+  return board;
+}
+
 export function ensureRoleForUser(roomId, userId) {
-  const board = ensureBoard(roomId);
-  if (!userId)
+  const board = getExistingBoard(roomId);
+  if (!board) return { role: Roles.VIEWER, canEdit: false, locked: false };
+
+  const uid = userId ? String(userId) : "";
+  if (!uid)
     return { role: Roles.VIEWER, canEdit: false, locked: !!board.locked };
 
-  const uid = String(userId);
-
-  // owner normalization
   if (board.createdBy && String(board.createdBy) === uid) {
     board.roles[uid] = Roles.OWNER;
-    if (!board.members.includes(userId)) board.members.push(userId);
-    return getPermissionsForUser(roomId, userId);
+    if (!board.members.includes(uid)) board.members.push(uid);
+    touch(board);
+    schedulePersist(board);
+    return getPermissionsForUser(roomId, uid);
   }
 
-  if (!board.roles[uid]) {
-    board.roles[uid] = DEFAULT_ROLE_FOR_NEW_MEMBER;
-  }
+  if (!board.roles[uid]) board.roles[uid] = DEFAULT_ROLE_FOR_NEW_MEMBER;
+  if (!board.members.includes(uid)) board.members.push(uid);
 
-  if (!board.members.includes(userId)) board.members.push(userId);
-
-  return getPermissionsForUser(roomId, userId);
+  touch(board);
+  schedulePersist(board);
+  return getPermissionsForUser(roomId, uid);
 }
 
 export function getUserRole(roomId, userId) {
-  const board = ensureBoard(roomId);
-  if (!userId) return Roles.VIEWER;
+  const board = getExistingBoard(roomId);
+  if (!board) return Roles.VIEWER;
 
-  const uid = String(userId);
+  const uid = userId ? String(userId) : "";
+  if (!uid) return Roles.VIEWER;
+
   if (board.createdBy && String(board.createdBy) === uid) return Roles.OWNER;
-
   return board.roles?.[uid] || DEFAULT_ROLE_FOR_NEW_MEMBER;
 }
 
 export function getPermissionsForUser(roomId, userId) {
-  const board = ensureBoard(roomId);
+  const board = getExistingBoard(roomId);
+  if (!board) return { role: Roles.VIEWER, canEdit: false, locked: false };
+
   const role = getUserRole(roomId, userId);
   const locked = !!board.locked;
-
   const canEdit = role === Roles.OWNER || (role === Roles.EDITOR && !locked);
 
   return { role, canEdit, locked };
 }
 
 export function setUserRole(roomId, targetUserId, role) {
-  const board = ensureBoard(roomId);
-  if (!targetUserId) return board;
+  const board = getExistingBoard(roomId);
+  if (!board || !targetUserId) return board;
 
   const tid = String(targetUserId);
-
-  // jangan pernah downgrade owner
   if (board.createdBy && String(board.createdBy) === tid) {
     board.roles[tid] = Roles.OWNER;
+    touch(board);
+    schedulePersist(board);
     return board;
   }
 
@@ -184,42 +229,54 @@ export function setUserRole(roomId, targetUserId, role) {
   if (!valid) return board;
 
   board.roles[tid] = role;
-  if (!board.members.includes(targetUserId)) board.members.push(targetUserId);
+  if (!board.members.includes(tid)) board.members.push(tid);
+
+  touch(board);
+  schedulePersist(board);
   return board;
 }
 
 export function setBoardLocked(roomId, locked) {
-  const board = ensureBoard(roomId);
+  const board = getExistingBoard(roomId);
+  if (!board) return null;
+
   board.locked = !!locked;
+  touch(board);
+  schedulePersist(board);
   return board;
 }
 
 export function upsertElement(roomId, element) {
-  let board = boards.get(roomId);
-  if (!board) {
-    // Kalau board belum ada, buat minimal (supaya flow tetap jalan)
-    board = {
-      roomId,
-      createdBy: null,
-      createdAt: new Date(),
-      elements: [],
-    };
-    boards.set(roomId, board);
-  }
+  const board = getExistingBoard(roomId);
+  if (!board || !element?.id) return board;
 
-  const idx = board.elements.findIndex((el) => el.id === element.id);
-  if (idx === -1) {
-    board.elements.push(element);
-  } else {
-    board.elements[idx] = element;
-  }
+  const idx = board.elements.findIndex((el) => el?.id === element.id);
+  if (idx === -1) board.elements.push(element);
+  else board.elements[idx] = element;
+
+  touch(board);
+  schedulePersist(board);
   return board;
 }
 
 export function clearBoard(roomId) {
-  const board = boards.get(roomId);
-  if (board) {
-    board.elements = [];
-  }
+  const board = getExistingBoard(roomId);
+  if (!board) return null;
+
+  board.elements = [];
+  touch(board);
+  schedulePersist(board);
   return board;
+}
+
+export async function deleteBoard(roomId) {
+  const rid = String(roomId || "");
+  if (!rid) return false;
+
+  boards.delete(rid);
+  persistQueueByRoom.delete(rid);
+
+  // remove from DB
+  const result = await Board.deleteOne({ roomId: rid });
+  return (result?.deletedCount || 0) > 0;
 }

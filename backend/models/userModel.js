@@ -1,51 +1,45 @@
-// Dummy users; nanti bisa diganti Mongo schema
-const users = [
-  {
-    id: "1",
-    username: "admin",
-    password: "admin", // plain text hanya untuk dummy!
-    displayName: "User-000001",
-  },
-  {
-    id: "2",
-    username: "anto",
-    password: "anto",
-    displayName: "User-000002",
-  },
-  {
-    id: "3",
-    username: "nico",
-    password: "nico",
-    displayName: "User-000003",
-  },
-  {
-    id: "4",
-    username: "hansen",
-    password: "hansen",
-    displayName: "User-000004",
-  },
-  {
-    id: "5",
-    username: "wilson",
-    password: "wilson",
-    displayName: "User-000005",
-  },
-];
+import mongoose from "mongoose";
 
-export function findByUsername(username) {
-  return users.find((u) => u.username === username);
+const userSchema = new mongoose.Schema(
+  {
+    _id: { type: String, required: true },
+    username: { type: String, required: true, unique: true, index: true },
+    password: { type: String, required: true },
+    displayName: { type: String, required: true },
+  },
+  { timestamps: true, versionKey: false }
+);
+
+export const User = mongoose.model("User", userSchema);
+
+function mapUser(doc) {
+  if (!doc) return null;
+  return {
+    id: String(doc._id),
+    username: doc.username,
+    password: doc.password,
+    displayName: doc.displayName,
+  };
 }
 
-export function findById(id) {
-  return users.find((u) => u.id === id);
+export async function findByUsername(username) {
+  const doc = await User.findOne({ username: String(username || "") }).lean();
+  return mapUser(doc);
 }
 
-export function updateDisplayName(id, newName) {
-  const user = findById(id);
-  if (user) {
-    user.displayName = newName;
-  }
-  return user;
+export async function findById(id) {
+  const doc = await User.findById(String(id || "")).lean();
+  return mapUser(doc);
+}
+
+export async function updateDisplayName(id, newName) {
+  const doc = await User.findByIdAndUpdate(
+    String(id || ""),
+    { $set: { displayName: newName } },
+    { new: true }
+  ).lean();
+
+  return mapUser(doc);
 }
 
 export function generateRandomDisplayName() {

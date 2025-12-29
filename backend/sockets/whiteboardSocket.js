@@ -7,8 +7,11 @@ import {
   ensureRoleForUser,
   getPermissionsForUser,
   setUserRole,
+  loadBoardFromDb,
   removeMemberAndRole,
 } from "../models/whiteboardStore.js";
+
+import { recordMemberJoin } from "../models/whiteboardModel.js";
 
 // In-memory room presence tracking.
 // This lets us show "who is in the room" even if they never join voice.
@@ -169,7 +172,8 @@ function kickUserFromRoom(io, roomId, targetUserId, byUser) {
   if (roomPresence.size === 0) presenceByRoom.delete(roomId);
 
   // Cleanup role
-  removeMemberAndRole(roomId, String(targetUserId));
+  // removeMemberAndRole(roomId, String(targetUserId));
+
   // Broadcast member list update
   emitRoomMembers(io, roomId);
   return true;
@@ -206,46 +210,56 @@ export function registerWhiteboardHandlers(io, socket) {
 
   // Handshake: user join ke room tertentu
   socket.on("join-room", async ({ roomId }) => {
-    if (!roomId) return;
+    const rid = String(roomId || "");
+    if (!rid) return;
 
-    socket.join(roomId);
-    socket.data.roomId = roomId;
-    const count = await io.in(roomId).fetchSockets();
+    let board = getBoardById(rid);
+    if (!board) {
+      board = await loadBoardFromDb(rid);
+    }
 
-    console.log(`A user :${socket.user.username} just joined room : ${roomId}`);
-    console.log(
-      `Now room :${roomId} has total number of ${count.length}connected users `
-    );
-    console.log("==========");
+    if (!board) {
+      // jangan join room, jangan persist join, jangan kirim whiteboard-state kosong
+      socket.emit("board-not-found", { roomId: rid });
+      return;
+    }
 
+    socket.join(rid);
+    socket.data.roomId = rid;
+
+    // Update membership/role + persist join history (board sudah pasti ada)
     if (socket.user && socket.user.id) {
-      addMember(roomId, socket.user.id);
+      const uid = String(socket.user.id);
 
-      await sleep(15000);
-      // ensure role & send permission snapshot
-      ensureRoleForUser(roomId, socket.user.id);
-      const perms = getPermissionsForUser(roomId, socket.user.id);
+      addMember(rid, uid);
+      ensureRoleForUser(rid, uid);
 
+      // Persist "pernah join" (harus return true karena board valid)
+      const ok = await recordMemberJoin(rid, uid);
+      if (!ok) {
+        // extremely defensive: kalau DB gagal/board hilang, jangan lanjut hydrate
+        socket.emit("board-not-found", { roomId: rid });
+        return;
+      }
+
+      const perms = getPermissionsForUser(rid, uid);
       socket.emit("room-permissions", {
-        roomId,
+        roomId: rid,
         role: perms.role,
         canEdit: perms.canEdit,
         locked: perms.locked,
       });
 
-      // Track room presence (untuk participant list UI)
-      socket.data.userId = String(socket.user.id);
-      upsertPresence(roomId, socket.user, socket.id);
-      emitRoomMembers(io, roomId);
+      socket.data.userId = uid;
+      upsertPresence(rid, socket.user, socket.id);
+      emitRoomMembers(io, rid);
     }
 
-    const board = getBoardById(roomId);
-    const locks = getLocksSnapshot(roomId);
-
-    // Kirim elements + title
+    // Hydration state (board valid)
+    const locks = getLocksSnapshot(rid);
     socket.emit("whiteboard-state", {
-      elements: board?.elements || [],
-      title: board?.title || "Untitled Whiteboard",
+      elements: board.elements || [],
+      title: board.title || "Untitled Whiteboard",
       locks,
     });
   });
@@ -262,6 +276,18 @@ export function registerWhiteboardHandlers(io, socket) {
     const perms = getPermissionsForUser(resolvedRoomId, socket.user?.id);
     if (!perms.canEdit) {
       emitPermissionDenied("element-update", "View-only mode");
+      return;
+    }
+
+    const requesterId = String(socket.user?.id ?? "");
+    const roomLocks = locksByRoom.get(resolvedRoomId);
+    const lockOwner = roomLocks?.get(String(element.id));
+
+    if (lockOwner && String(lockOwner) !== requesterId) {
+      emitPermissionDenied(
+        "element-update",
+        "Element is locked by another user"
+      );
       return;
     }
 
@@ -470,9 +496,9 @@ export function registerWhiteboardHandlers(io, socket) {
       const fullyLeft = removePresence(roomId, presenceUserId, socket.id);
 
       // Cleanup role & membership HANYA kalau user benar-benar keluar (socket terakhir)
-      if (fullyLeft) {
-        removeMemberAndRole(roomId, presenceUserId);
-      }
+      // if (fullyLeft) {
+      //   removeMemberAndRole(roomId, presenceUserId);
+      // }
 
       emitRoomMembers(io, roomId);
     }

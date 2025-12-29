@@ -4,6 +4,7 @@ import DashboardPage from "./pages/DashboardPage";
 import { useAuth } from "./hooks/useAuth";
 import WhiteboardPage from "./pages/WhiteboardPage";
 import { useEffect, useState } from "react";
+import NotFoundPage from "./pages/NotFoundPage";
 
 function PrivateRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -41,6 +42,7 @@ export default function App() {
         }
       />
       <Route path="/board/:roomId" element={<WhiteboardPage />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

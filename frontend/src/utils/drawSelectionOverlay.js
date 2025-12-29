@@ -136,7 +136,7 @@ export function drawSelectionOverlay(
     const shortName = name
       ? String(name).split(" ").slice(0, 2).join(" ")
       : "Someone";
-    drawLockBadge(ctx, left, top, "Locked by " + shortName);
+    drawLockBadge(ctx, left, top, "Edited by " + shortName);
   }
 
   // Local selected

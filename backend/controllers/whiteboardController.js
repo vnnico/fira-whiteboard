@@ -1,28 +1,76 @@
-// Note: Kita butuh akses ke 'boards' Map untuk filter,
-// atau buat fungsi getAllBoards di store.js (lebih rapi).
-// Anggap kita export 'getAllBoards' dari store.js yang return Array.from(boards.values())
-
-// Kalau malas ubah store, import map nya langsung (tapi tidak best practice).
-// Mari kita asumsikan di store.js anda tambah:
-// export function getAllBoards() { return Array.from(boards.values()); }
-
 import {
   getAllBoards,
   updateBoardTitle,
   createBoard,
   getBoardById,
+  loadBoardFromDb,
+  deleteBoard,
 } from "../models/whiteboardStore.js";
+import { Board } from "../models/whiteboardModel.js";
 
 import { getWhiteboardNameSpace } from "../sockets/index.js";
+
+// GET /api/whiteboards/:roomId/exists
+
+export async function checkWhiteboardExists(req, res, next) {
+  try {
+    const rid = String(req.params.roomId || "");
+    if (!rid) return res.status(400).json({ message: "Missing roomId" });
+
+    let board = getBoardById(rid);
+
+    console.log(board);
+    if (!board) board = await loadBoardFromDb(rid);
+
+    if (!board) return res.status(404).json({ exists: false });
+    return res.status(200).json({ exists: true });
+  } catch (err) {
+    next(err);
+  }
+}
 
 // GET /api/whiteboards/:roomId
 export async function getWhiteboard(req, res, next) {
   try {
-    const { roomId } = req.params;
-    const board = getBoardById(roomId);
+    const userId = String(req.user.id);
+
+    // Ambil semua board yang dibuat oleh user, atau user pernah join (members)
+    const boards = await Board.find({
+      $or: [{ createdBy: userId }, { members: userId }],
+    })
+      .select("roomId title createdBy members createdAt updatedAt locked")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const myWhiteboards = boards.filter((b) => String(b.createdBy) === userId);
+
+    const joinedWhiteboards = boards.filter(
+      (b) =>
+        String(b.createdBy) !== userId && (b.members || []).includes(userId)
+    );
+
+    res.status(200).json({ myWhiteboards, joinedWhiteboards });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getWhiteboardMeta(req, res, next) {
+  try {
+    const rid = String(req.params.roomId || "");
+    if (!rid) return res.status(400).json({ message: "Missing roomId" });
+
+    let board = getBoardById(rid);
+    if (!board) board = await loadBoardFromDb(rid);
+
     if (!board) return res.status(404).json({ message: "Board not found" });
 
-    res.status(200).json({ board });
+    return res.status(200).json({
+      roomId: board.roomId,
+      title: board.title,
+      createdBy: board.createdBy,
+      locked: !!board.locked,
+    });
   } catch (err) {
     next(err);
   }
@@ -94,6 +142,30 @@ export async function createWhiteboard(req, res, next) {
         elements: board.elements,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// DELETE /api/whiteboards/:roomId
+export async function deleteWhiteboard(req, res, next) {
+  try {
+    const userId = String(req.user.id);
+    const { roomId } = req.params;
+
+    let board = getBoardById(roomId);
+    if (!board) board = await loadBoardFromDb(roomId);
+
+    if (!board) return res.status(404).json({ message: "Board not found" });
+    if (String(board.createdBy) !== userId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    await deleteBoard(roomId);
+
+    getWhiteboardNameSpace()?.to(roomId).emit("board-deleted", { roomId });
+
+    res.status(200).json({ success: true });
   } catch (err) {
     next(err);
   }

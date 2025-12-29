@@ -30,7 +30,6 @@ function drawLockLabel(ctx, element) {
   ctx.save();
   ctx.fillStyle = "#ef4444";
   ctx.font = "10px system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
-  ctx.fillText("Editing...", x1 + 4, y1 - 4);
   ctx.restore();
 }
 
@@ -161,7 +160,7 @@ export function drawElements(ctx, elements, locks = {}, myUserId) {
   elements.forEach((el) => {
     if (!el) return;
     const lockedByOther = locks[el.id] && locks[el.id] !== myUserId;
-    const strokeColor = lockedByOther ? "#ef4444" : el.stroke || "#111827";
+    const strokeColor = el.stroke || "#111827";
 
     drawElement(ctx, roughCanvas, el, { strokeColor });
 

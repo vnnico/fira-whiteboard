@@ -35,7 +35,7 @@ import LoadingModal from "../ui/LoadingModal";
 
 const CANVAS_SIZE = 8000;
 const CLIPBOARD_OFFSET = 20;
-const LOCK_IDLE_TIMEOUT_MS = 10 * 1000;
+const LOCK_IDLE_TIMEOUT_MS = 5 * 1000;
 
 const STROKE_COLORS = [
   "#111827", // slate-900
@@ -1072,20 +1072,26 @@ export default function WhiteboardCanvas({
 
   // Auto-unlock when tab is hidden or window blur
   useEffect(() => {
-    const onBlur = () => {
-      releaseMySelectedLock();
-    };
+    // const onBlur = () => {
+    //   releaseMySelectedLock();
+    // };
 
     const onVisibility = () => {
       if (document.hidden) {
         releaseMySelectedLock();
       }
     };
-    window.addEventListener("blur", onBlur);
+
+    const onPageHide = () => {
+      releaseMySelectedLock();
+    };
+
+    // window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pageHide", onPageHide);
 
     return () => {
-      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("pageHide", onPageHide);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [selectedId, locks, myUserId, writingElementId]);
@@ -1171,6 +1177,7 @@ export default function WhiteboardCanvas({
         const selectedEl = elements.find((el) => el?.id === selectedId);
 
         if (selectedEl) {
+          console.log(selectedEl);
           const hitPos = getSelectionHitPosition(selectedEl, x, y);
 
           if (hitPos !== CursorPosition.OUTSIDE) {

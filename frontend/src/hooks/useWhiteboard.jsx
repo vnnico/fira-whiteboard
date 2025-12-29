@@ -79,11 +79,18 @@ export function useWhiteboard(roomId) {
       }
     );
 
+    s.on("board-not-found", ({ roomId: notFoundRoomId }) => {
+      window.dispatchEvent(
+        new CustomEvent("wb-not-found", {
+          detail: { roomId: notFoundRoomId || roomId },
+        })
+      );
+    });
+
     // realtime element update
     s.on("element-update", ({ element }) => {
       if (!element) return;
 
-      console.log(element);
       setElements((prev) => {
         const idx = prev.findIndex((el) => el.id === element.id);
         if (idx === -1) return [...prev, element];
@@ -300,24 +307,27 @@ export function useWhiteboard(roomId) {
           userId: myUserId,
           locked: true,
         });
-        // local optimistik
-        setLocks((prev) => ({ ...prev, [elementId]: myUserId }));
+        socket.emit(
+          "element-lock",
+          { roomId, elementId, locked: true },
+          (ack) => {
+            if (ack && !ack.ok) {
+            }
+          }
+        );
       },
       unlockElement: (elementId) => {
         if (!canEdit) return;
 
         if (!socket) return;
-        socket.emit("element-lock", {
-          roomId,
-          elementId,
-          userId: myUserId,
-          locked: false,
-        });
-        setLocks((prev) => {
-          const next = { ...prev };
-          if (next[elementId] === myUserId) delete next[elementId];
-          return next;
-        });
+        socket.emit(
+          "element-lock",
+          { roomId, elementId, locked: false },
+          (ack) => {
+            if (ack && !ack.ok) {
+            }
+          }
+        );
       },
       kickUser: (targetUserId) => {
         if (!socket) return;
