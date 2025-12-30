@@ -5,6 +5,7 @@ import {
   FiMicOff,
   FiUserMinus,
   FiHeadphones,
+  FiEdit2,
 } from "react-icons/fi";
 import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
 
@@ -146,6 +147,7 @@ function ParticipantCard({
 }) {
   const isOwner = myRole === "OWNER";
   const isSelf = !!participant.isMe;
+  const isEditor = String(participant.role || "VIEWER") === "EDITOR";
 
   // Support both shapes:
   // - participant.voice.{inVoice,micEnabled,deafened}
@@ -212,14 +214,21 @@ function ParticipantCard({
 
       <div className="flex gap-1">
         {isOwner && !isSelf && (
-          <select
-            value={participant.role || "VIEWER"}
-            onChange={(e) => onSetRole?.(participant.id, e.target.value)}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs"
+          <button
+            type="button"
+            aria-pressed={isEditor}
+            onClick={() =>
+              onSetRole?.(participant.id, isEditor ? "VIEWER" : "EDITOR")
+            }
+            title={isEditor ? "Set as viewer" : "Set as editor"}
+            className={`rounded-lg p-2 transition-colors ${
+              isEditor
+                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            }`}
           >
-            <option value="VIEWER">VIEWER</option>
-            <option value="EDITOR">EDITOR</option>
-          </select>
+            <FiEdit2 size={16} />
+          </button>
         )}
 
         {isSelf && (

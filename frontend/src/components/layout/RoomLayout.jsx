@@ -88,6 +88,7 @@ export default function RoomLayout({
 
   const myRole = participantsForUI.find((p) => p.isMe)?.role || "VIEWER";
   const prevMyRoleRef = useRef(myRole);
+  const hasInitMyRoleRef = useRef(false);
 
   const audioUnlockOnceRef = useRef(false);
 
@@ -145,7 +146,22 @@ export default function RoomLayout({
   }, [participantsForUI, showToast, wbConnectionState]);
 
   useEffect(() => {
-    let prevRole = prevMyRoleRef.current;
+    // Prevent role toasts during initial hydration
+    // wait until connected AND all user already appears in roomMembers.
+    if (wbConnectionState !== "connected" || !hasJoinedWhiteboardRoom) {
+      hasInitMyRoleRef.current = false;
+      prevMyRoleRef.current = myRole;
+      return;
+    }
+
+    // First stable moment (connected + already in roomMembers) and set baseline role w/o toast
+    if (!hasInitMyRoleRef.current) {
+      hasInitMyRoleRef.current = true;
+      prevMyRoleRef.current = myRole;
+      return;
+    }
+
+    const prevRole = prevMyRoleRef.current;
     if (prevRole === myRole) return;
 
     if (myRole === "EDITOR") {
@@ -155,7 +171,7 @@ export default function RoomLayout({
     }
 
     prevMyRoleRef.current = myRole;
-  }, [myRole, showToast]);
+  }, [myRole, showToast, wbConnectionState, hasJoinedWhiteboardRoom]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {

@@ -6,7 +6,7 @@ const persistQueueByRoom = new Map();
 
 export const Roles = RoleEnum;
 
-const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.VIEWER;
+const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.EDITOR;
 
 function normalizeBoard(raw) {
   if (!raw) return null;

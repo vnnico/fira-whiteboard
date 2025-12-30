@@ -24,10 +24,10 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
 
   const [openMenuRoomId, setOpenMenuRoomId] = useState(null);
-  const [renameTarget, setRenameTarget] = useState(null); // {roomId, title}
+  const [renameTarget, setRenameTarget] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [renaming, setRenaming] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState(null); // {roomId, title}
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
   const navigate = useNavigate();
