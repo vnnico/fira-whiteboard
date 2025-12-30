@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { FiChevronLeft, FiChevronRight } from "react-icons/fi";
+import {
+  FiChevronLeft,
+  FiChevronRight,
+  FiPlay,
+  FiRotateCcw,
+  FiSquare,
+} from "react-icons/fi";
 import { GrDuplicate } from "react-icons/gr";
 import { FaRegCopy } from "react-icons/fa6";
 import { RiDeleteBin6Line } from "react-icons/ri";
@@ -93,6 +99,13 @@ const isFillableTool = (t) => {
   );
 };
 
+const clampMinutes = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 5;
+  if (n < 5) return 5;
+  if (n > 120) return 120;
+  return Math.trunc(n);
+};
 export default function WhiteboardCanvas({
   roomId,
   onTitleChange,
@@ -168,6 +181,10 @@ export default function WhiteboardCanvas({
     isHydrated,
     kickUser,
     setUserRole,
+    timerState,
+    startTimer,
+    stopTimer,
+    resetTimer,
   } = useWhiteboard(roomId);
 
   const wbBlocked = wbConnectionState !== "connected" || !isHydrated;
@@ -187,6 +204,13 @@ export default function WhiteboardCanvas({
   );
   const [textDraft, setTextDraft] = useState("");
   const [writingElementId, setWritingElementId] = useState(null);
+
+  const [isTimerOpen, setIsTimerOpen] = useState(false);
+  const [timerMinutes, setTimerMinutes] = useState("5");
+  const timerRef = useRef(null);
+
+  const timerRunning = !!timerState?.running;
+  const canUseTimer = role === "OWNER";
 
   const exportPng = useCallback(() => {
     // kalau sedang edit text, commit dulu agar hasil export final
@@ -256,6 +280,19 @@ export default function WhiteboardCanvas({
     showToast?.("Exported PNG", "success");
   }, [writingElementId, elements, myUserId, roomId, showToast]);
 
+  useEffect(() => {
+    if (!isTimerOpen) return;
+
+    const onDown = (e) => {
+      const el = timerRef.current;
+      if (!el) return;
+      if (!el.contains(e.target)) setIsTimerOpen(false);
+    };
+
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [isTimerOpen]);
+
   // Lift room presence up to RoomLayout (for avatar list / sidebar)
   useEffect(() => {
     if (typeof onMembersChange === "function")
@@ -263,8 +300,26 @@ export default function WhiteboardCanvas({
   }, [roomMembers, onMembersChange]);
 
   useEffect(() => {
-    onWhiteboardApi?.({ kickUser, setUserRole, exportPng });
-  }, [onWhiteboardApi, kickUser, setUserRole, exportPng]);
+    onWhiteboardApi?.({
+      kickUser,
+      setUserRole,
+      exportPng,
+
+      timerState,
+      startTimer,
+      stopTimer,
+      resetTimer,
+    });
+  }, [
+    onWhiteboardApi,
+    kickUser,
+    setUserRole,
+    exportPng,
+    timerState,
+    startTimer,
+    stopTimer,
+    resetTimer,
+  ]);
 
   useEffect(() => {
     if (typeof onConnectionStateChange === "function") {
@@ -2009,9 +2064,86 @@ export default function WhiteboardCanvas({
         }`}
       >
         <div className="ms-2 flex flex-col items-center gap-4">
-          <button className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-200 text-sm text-slate-700 shadow">
-            ⏱
-          </button>
+          {canUseTimer && (
+            <div className="relative" ref={timerRef}>
+              <button
+                type="button"
+                onClick={() => setIsTimerOpen((v) => !v)}
+                className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-200 transition"
+                title="Timer"
+              >
+                ⏱
+              </button>
+
+              {isTimerOpen && (
+                <div className="absolute left-14 top-0 z-40 rounded-2xl bg-white p-3 shadow-2xl ring-1 ring-slate-900/10">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={5}
+                        max={120}
+                        step={5}
+                        value={timerMinutes}
+                        disabled={timerRunning}
+                        onChange={(e) => setTimerMinutes(e.target.value)}
+                        onBlur={() => {
+                          const n = clampMinutes(timerMinutes);
+                          setTimerMinutes(String(n));
+                        }}
+                        className="w-20 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm tabular-nums"
+                      />
+                      <span className="text-sm text-slate-500">min</span>
+                    </div>
+
+                    <div className="h-8 w-px bg-slate-200" />
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={timerRunning}
+                        onClick={() => {
+                          const n = clampMinutes(timerMinutes);
+                          startTimer?.(n * 60 * 1000);
+                          setIsTimerOpen(false);
+                        }}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white disabled:opacity-50"
+                        title="Start"
+                      >
+                        <FiPlay />
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={!timerRunning}
+                        onClick={() => {
+                          stopTimer?.();
+                          setIsTimerOpen(false);
+                        }}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700 disabled:opacity-50"
+                        title="Stop"
+                      >
+                        <FiSquare />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetTimer?.();
+                          setIsTimerOpen(false);
+                        }}
+                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700"
+                        title="Reset"
+                      >
+                        <FiRotateCcw />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="relative">
             <button
               disabled={editDisabled}
@@ -2070,7 +2202,7 @@ export default function WhiteboardCanvas({
                       type="button"
                       onClick={() => {
                         setStrokeWidth(w);
-                        applyStyleToSelected({ stroke: c });
+                        applyStyleToSelected({ stroke: w });
                       }}
                       className={`flex flex-1 items-center justify-center rounded-lg border px-2 py-2 ${
                         strokeWidth === w

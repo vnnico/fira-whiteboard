@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { FiShare2, FiMenu, FiChevronLeft, FiDownload } from "react-icons/fi";
+
 import { useLocation, useNavigate } from "react-router-dom";
 import { useVoiceState } from "../../hooks/useVoiceState";
 import CommDock from "./CommDock";
@@ -19,6 +20,7 @@ export default function RoomLayout({
   setUserRoleFn,
   onExportPngFn,
   wbConnectionState = "disconnected",
+  timerState,
 }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const voiceState = useVoiceState({ roomId });
@@ -106,9 +108,45 @@ export default function RoomLayout({
     }
   };
 
+  const formatMs = (ms) => {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
+
+  const [remainingMs, setRemainingMs] = useState(0);
+
+  useEffect(() => {
+    if (!timerState?.running || !timerState?.endAt) {
+      setRemainingMs(0);
+      return;
+    }
+
+    const tick = () => setRemainingMs(timerState.endAt - Date.now());
+    tick();
+
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [timerState?.running, timerState?.endAt]);
+
   useEffect(() => {
     setLocalTitle(title || "Untitled");
   }, [title]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      const p = e?.detail || {};
+      const action = String(p.action || "");
+
+      if (action === "start") showToast("Timer started", "success");
+      if (action === "stop") showToast("Timer stopped", "info");
+      if (action === "reset") showToast("Timer reset", "info");
+    };
+
+    window.addEventListener("wb-timer-action", handler);
+    return () => window.removeEventListener("wb-timer-action", handler);
+  }, [showToast]);
 
   useEffect(() => {
     let prev = prevParticipantsRef.current;
@@ -181,9 +219,13 @@ export default function RoomLayout({
   }, [isEditing]);
 
   useEffect(() => {
-    const onKicked = async () => {
+    const onKicked = async (e) => {
+      const reason = e?.detail?.reason;
+
+      //  toast di sini supaya pasti muncul sebelum navigate
+      if (reason === "timer") showToast("Session ended (timer)", "info");
+
       try {
-        // leave voice if connected
         await voiceState?.leaveVoice?.();
       } catch (_) {
         // ignore
@@ -194,7 +236,7 @@ export default function RoomLayout({
 
     window.addEventListener("wb-kicked", onKicked);
     return () => window.removeEventListener("wb-kicked", onKicked);
-  }, [leaveVoice, navigate]);
+  }, [voiceState, navigate, showToast]);
 
   const participantsRef = useRef([]);
   useEffect(() => {
@@ -446,6 +488,24 @@ export default function RoomLayout({
       </header>
 
       <main className="absolute inset-0 z-0">{children}</main>
+
+      {timerState?.running && timerState?.endAt && (
+        <div className="fixed bottom-4 right-4 z-50 pointer-events-none">
+          <div className={"rounded-xl px-4 py-2 text-black"}>
+            <div className="text-xs opacity-80">Time left</div>
+            <div
+              className={[
+                "tabular-nums",
+                remainingMs <= 10_000
+                  ? "text-xl text-red-500 animate-pulse font-semibold"
+                  : "text-red",
+              ].join(" ")}
+            >
+              {formatMs(remainingMs)}
+            </div>
+          </div>
+        </div>
+      )}
 
       <CommDock
         voiceState={voiceState}

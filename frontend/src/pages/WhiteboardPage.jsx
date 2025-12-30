@@ -34,8 +34,17 @@ export default function WhiteboardPage() {
   // Export
   const [onExportPngFn, setOnExportPngFn] = useState(null);
 
-  // Timer
-  // ...
+  // Timer state + controls from WhiteboardCanvas
+  const [timerState, setTimerState] = useState({
+    running: false,
+    endAt: null,
+    durationMs: null,
+    startedBy: null,
+  });
+
+  const [startTimerFn, setStartTimerFn] = useState(null);
+  const [stopTimerFn, setStopTimerFn] = useState(null);
+  const [resetTimerFn, setResetTimerFn] = useState(null);
 
   // idle | checking | ok | not_found | error
   const [boardStatus, setBoardStatus] = useState("idle");
@@ -242,16 +251,32 @@ export default function WhiteboardPage() {
       setUserRoleFn={setUserRoleFn}
       onExportPngFn={onExportPngFn}
       wbConnectionState={wbConnectionState}
+      timerState={timerState}
+      startTimerFn={startTimerFn}
+      stopTimerFn={stopTimerFn}
+      resetTimerFn={resetTimerFn}
     >
       <WhiteboardCanvas
         roomId={roomId}
         onTitleChange={setTitle}
         onMembersChange={setRoomMembers}
         onConnectionStateChange={setWbConnectionState}
-        onWhiteboardApi={({ kickUser, setUserRole, exportPng }) => {
+        onWhiteboardApi={({
+          kickUser,
+          setUserRole,
+          exportPng,
+          timerState,
+          startTimer,
+          stopTimer,
+          resetTimer,
+        }) => {
           if (kickUser) setKickUserFn(() => kickUser);
           if (setUserRole) setSetUserRoleFn(() => setUserRole);
           if (exportPng) setOnExportPngFn(() => exportPng);
+          if (timerState) setTimerState(timerState);
+          if (startTimer) setStartTimerFn(() => startTimer);
+          if (stopTimer) setStopTimerFn(() => stopTimer);
+          if (resetTimer) setResetTimerFn(() => resetTimer);
         }}
       />
     </RoomLayout>

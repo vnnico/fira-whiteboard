@@ -37,6 +37,13 @@ export function useWhiteboard(roomId) {
   // Room presence (who is in the room, regardless of voice)
   const [roomMembers, setRoomMembers] = useState([]);
 
+  const [timerState, setTimerState] = useState({
+    running: false,
+    endAt: null,
+    durationMs: null,
+    startedBy: null,
+  });
+
   // ------ socket setup ------
   useEffect(() => {
     if (!token || !roomId) return;
@@ -62,6 +69,28 @@ export function useWhiteboard(roomId) {
       setIsHydrated(false);
       setConnectionState("connected");
       s.emit("join-room", { roomId });
+    });
+
+    s.on("timer:action", (p) => {
+      window.dispatchEvent(new CustomEvent("wb-timer-action", { detail: p }));
+    });
+
+    s.on("timer:state", (payload) => {
+      setTimerState({
+        running: !!payload?.running,
+        endAt: payload?.endAt ?? null,
+        durationMs: payload?.durationMs ?? null,
+        startedBy: payload?.startedBy ?? null,
+      });
+    });
+
+    // Session ended by timer
+    s.on("session:ended", ({ reason }) => {
+      showToast?.("Session ended", "info");
+
+      window.dispatchEvent(
+        new CustomEvent("wb-kicked", { detail: { reason: reason || "timer" } })
+      );
     });
 
     // snapshot
@@ -196,7 +225,9 @@ export function useWhiteboard(roomId) {
     s.on("kicked", ({ reason }) => {
       showToast?.(reason || "You were removed by host", "error");
       // Signal to page/UI that we should exit room
-      window.dispatchEvent(new CustomEvent("wb-kicked"));
+      window.dispatchEvent(
+        new CustomEvent("wb-kicked", { detail: { reason: reason || "kicked" } })
+      );
     });
 
     setSocket(s);
@@ -212,6 +243,12 @@ export function useWhiteboard(roomId) {
       setCanEdit(false);
       setLocked(false);
       setIsHydrated(false);
+      setTimerState({
+        running: false,
+        endAt: null,
+        durationMs: null,
+        startedBy: null,
+      });
     };
   }, [roomId, token]);
 
@@ -253,6 +290,7 @@ export function useWhiteboard(roomId) {
       canEdit,
       locked,
       isHydrated,
+      timerState,
 
       // mouseMove: kirim draft
       sendDraftElement: (element) => {
@@ -337,6 +375,19 @@ export function useWhiteboard(roomId) {
         if (!socket) return;
         socket.emit("moderation:set-role", { roomId, targetUserId, role });
       },
+
+      startTimer: (durationMs) => {
+        if (!socket) return;
+        socket.emit("timer:start", { roomId, durationMs });
+      },
+      stopTimer: () => {
+        if (!socket) return;
+        socket.emit("timer:stop", { roomId });
+      },
+      resetTimer: () => {
+        if (!socket) return;
+        socket.emit("timer:reset", { roomId });
+      },
     };
   }, [
     title,
@@ -350,6 +401,7 @@ export function useWhiteboard(roomId) {
     role,
     canEdit,
     locked,
+    timerState,
   ]);
 
   return api;

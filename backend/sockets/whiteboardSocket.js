@@ -18,6 +18,11 @@ import { recordMemberJoin } from "../models/whiteboardModel.js";
 // roomId -> userId -> { id, username, sockets: Set<socketId> }
 const presenceByRoom = new Map();
 const locksByRoom = new Map();
+const timerStateByRoom = new Map();
+const timerTimeoutByRoom = new Map();
+
+const MIN_TIMER_MS = 5 * 60 * 1000;
+const MAX_TIMER_MS = 120 * 60 * 1000;
 
 function getRoomLocks(roomId) {
   if (!locksByRoom.has(roomId)) {
@@ -124,6 +129,47 @@ function removePresence(roomId, userId, socketId) {
   }
 
   return false; // user masih punya socket lain
+}
+
+function getTimerState(roomId) {
+  return (
+    timerStateByRoom.get(roomId) || {
+      running: false,
+      endAt: null,
+      durationMs: null,
+      startedBy: null,
+    }
+  );
+}
+
+function clearTimerTimeout(roomId) {
+  const t = timerTimeoutByRoom.get(roomId);
+  if (t) clearTimeout(t);
+  timerTimeoutByRoom.delete(roomId);
+}
+
+function broadcastTimerState(io, roomId) {
+  const state = getTimerState(roomId);
+  io.to(roomId).emit("timer:state", { roomId, ...state });
+}
+
+function stopTimer(io, roomId) {
+  clearTimerTimeout(roomId);
+  timerStateByRoom.set(roomId, {
+    running: false,
+    endAt: null,
+    durationMs: null,
+    startedBy: null,
+  });
+  broadcastTimerState(io, roomId);
+}
+
+function endSessionByTimer(io, roomId) {
+  stopTimer(io, roomId);
+  io.to(roomId).emit("session:ended", {
+    roomId,
+    reason: "timer",
+  });
 }
 
 function emitRoomMembers(io, roomId) {
@@ -262,6 +308,9 @@ export function registerWhiteboardHandlers(io, socket) {
       title: board.title || "Untitled Whiteboard",
       locks,
     });
+
+    // Send current timer state to the joining client
+    socket.emit("timer:state", { roomId: rid, ...getTimerState(rid) });
   });
 
   socket.on("title-update", ({ roomId, title }) => {
@@ -480,6 +529,99 @@ export function registerWhiteboardHandlers(io, socket) {
     );
   });
 
+  socket.on("timer:start", ({ roomId, durationMs }) => {
+    try {
+      if (!roomId) return;
+
+      const ms = Number(durationMs);
+      if (!Number.isFinite(ms) || ms < MIN_TIMER_MS || ms > MAX_TIMER_MS) {
+        socket.emit("permission-denied", {
+          action: "timer:start",
+          message: "Invalid duration",
+        });
+        return;
+      }
+
+      const perms = getPermissionsForUser(roomId, socket.user.id);
+      if (!perms || perms.role !== "OWNER") {
+        socket.emit("permission-denied", {
+          action: "timer:start",
+          message: "Only owner can start timer",
+        });
+        return;
+      }
+
+      const current = getTimerState(roomId);
+      if (current.running) {
+        return;
+      }
+
+      const endAt = Date.now() + ms;
+
+      clearTimerTimeout(roomId);
+      timerStateByRoom.set(roomId, {
+        running: true,
+        endAt,
+        durationMs: ms,
+        startedBy: socket.user.id,
+      });
+
+      broadcastTimerState(io, roomId);
+      io.to(roomId).emit("timer:action", {
+        roomId,
+        action: "start",
+        actorUserId: String(socket.user?.id ?? ""),
+        durationMs: ms,
+      });
+
+      const timeout = setTimeout(() => {
+        endSessionByTimer(io, roomId);
+      }, ms);
+
+      timerTimeoutByRoom.set(roomId, timeout);
+    } catch (e) {}
+  });
+
+  socket.on("timer:stop", ({ roomId }) => {
+    if (!roomId) return;
+
+    const perms = getPermissionsForUser(roomId, socket.user.id);
+    if (!perms || perms.role !== "OWNER") {
+      socket.emit("permission-denied", {
+        action: "timer:stop",
+        message: "Only owner can stop timer",
+      });
+      return;
+    }
+
+    stopTimer(io, roomId);
+    io.to(roomId).emit("timer:action", {
+      roomId,
+      action: "stop",
+      actorUserId: String(socket.user?.id ?? ""),
+    });
+  });
+
+  socket.on("timer:reset", ({ roomId }) => {
+    if (!roomId) return;
+
+    const perms = getPermissionsForUser(roomId, socket.user.id);
+    if (!perms || perms.role !== "OWNER") {
+      socket.emit("permission-denied", {
+        action: "timer:reset",
+        message: "Only owner can reset timer",
+      });
+      return;
+    }
+
+    stopTimer(io, roomId);
+    io.to(roomId).emit("timer:action", {
+      roomId,
+      action: "reset",
+      actorUserId: String(socket.user?.id ?? ""),
+    });
+  });
+
   socket.on("disconnect", () => {
     const roomId = getRoomId();
     if (!roomId) return;
@@ -501,6 +643,12 @@ export function registerWhiteboardHandlers(io, socket) {
       // }
 
       emitRoomMembers(io, roomId);
+    }
+
+    // If room becomes empty, auto stop timer
+    const roomPresence = getRoomPresence(roomId);
+    if (roomPresence.size === 0) {
+      stopTimer(io, roomId);
     }
 
     // Use app userId for lock cleanup on clients; also include socketId for compatibility.
