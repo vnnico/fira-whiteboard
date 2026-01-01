@@ -9,44 +9,64 @@ export function registerVoiceHandlers(io, socket) {
   const getRoomId = (roomId) => roomId ?? socket.data?.roomId;
 
   socket.on("join-room", ({ roomId }) => {
-    const rid = String(roomId || "");
-    if (!rid) return;
+    try {
+      const rid = String(roomId || "");
+      if (!rid) return;
 
-    console.log("test masuk ga");
-    socket.join(rid);
-    socket.data.roomId = rid;
+      console.log("test masuk ga");
+      socket.join(rid);
+      socket.data.roomId = rid;
 
-    const uid = String(socket.user?.id || "");
-    if (uid) {
-      socket.data.userId = uid;
-      upsertUserSocket(rid, uid, socket.id);
+      const uid = String(socket.user?.id || "");
+      if (uid) {
+        socket.data.userId = uid;
+        upsertUserSocket(rid, uid, socket.id);
+      }
+
+      socket.emit("voice-state-snapshot", {
+        roomId: rid,
+        snapshot: getVoiceSnapshot(rid),
+      });
+    } catch (err) {
+      console.error("[voice] join-room:", err?.message || err);
+
+      socket.emit("server-error", {
+        roomId: rid,
+        action: "join-room",
+        message: "Something went wrong",
+      });
     }
-
-    socket.emit("voice-state-snapshot", {
-      roomId: rid,
-      snapshot: getVoiceSnapshot(rid),
-    });
   });
 
   socket.on("voice:state", ({ roomId, inVoice, deafened, micEnabled }) => {
     const rid = String(getRoomId(roomId) || "");
     const uid = String(socket.user?.id || socket.data?.userId || "");
-    if (!rid || !uid) return;
+    try {
+      if (!rid || !uid) return;
 
-    const patch = {};
-    if (typeof inVoice === "boolean") patch.inVoice = inVoice;
-    if (typeof deafened === "boolean") patch.deafened = deafened;
-    if (typeof micEnabled === "boolean") patch.micEnabled = micEnabled;
+      const patch = {};
+      if (typeof inVoice === "boolean") patch.inVoice = inVoice;
+      if (typeof deafened === "boolean") patch.deafened = deafened;
+      if (typeof micEnabled === "boolean") patch.micEnabled = micEnabled;
 
-    const next = setVoiceState(rid, uid, patch);
-    if (!next) return;
+      const next = setVoiceState(rid, uid, patch);
+      if (!next) return;
 
-    io.to(rid).emit("voice:state", {
-      roomId: rid,
-      userId: uid,
-      ...next,
-      ts: Date.now(),
-    });
+      io.to(rid).emit("voice:state", {
+        roomId: rid,
+        userId: uid,
+        ...next,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      console.error("[voice] voice:state error:", err?.message || err);
+
+      socket.emit("server-error", {
+        roomId: rid,
+        action: "voice:state",
+        message: "Something went wrong",
+      });
+    }
   });
 
   socket.on("disconnect", () => {

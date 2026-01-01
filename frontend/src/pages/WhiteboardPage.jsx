@@ -62,20 +62,25 @@ export default function WhiteboardPage() {
     );
   };
 
-  // if the URL isn't even a UUID, treat as not found.
-  if (!roomId || !isUuid(roomId)) {
-    // "nipu" untuk user belum login: generic 404
-    if (!isAuthenticated) return <NotFoundPage />;
-    return (
-      <NotFoundPage
-        title="Whiteboard not found"
-        description="This whiteboard link is invalid. Please open a board from your dashboard."
-      />
-    );
-  }
+  const isValidRoomId = !!roomId && isUuid(roomId);
 
-  // Runtime safety net: if the server emits "board-not-found" after socket connect.
+  const Backdrop = () => (
+    <div
+      className="absolute inset-0"
+      style={{
+        backgroundColor: "#f8fafc",
+        backgroundImage:
+          "linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)",
+        backgroundSize: "48px 48px",
+        backgroundPosition: "center",
+      }}
+    />
+  );
+
+  // if the server emits "wb-not-found" after socket connect.
   useEffect(() => {
+    if (!isValidRoomId) return;
+
     const onNotFound = (e) => {
       const rid = String(e?.detail?.roomId || "");
       if (!rid || rid !== String(roomId)) return;
@@ -84,13 +89,19 @@ export default function WhiteboardPage() {
 
     window.addEventListener("wb-not-found", onNotFound);
     return () => window.removeEventListener("wb-not-found", onNotFound);
-  }, [roomId]);
+  }, [isValidRoomId, roomId]);
 
-  // Check that the board exists before mounting the real whiteboard UI.
+  // Reset publicExists when user becomes unauthenticated (and when roomId changes).
   useEffect(() => {
+    if (!isValidRoomId) return;
+    if (!isAuthenticated) setPublicExists(null);
+  }, [isValidRoomId, roomId, isAuthenticated]);
+
+  // Public: check existence before showing login-required (anti "sneak peek").
+  useEffect(() => {
+    if (!isValidRoomId) return;
     if (loading) return;
     if (isAuthenticated) return;
-    if (!roomId) return;
 
     let cancelled = false;
 
@@ -106,16 +117,17 @@ export default function WhiteboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [loading, isAuthenticated, roomId]);
+  }, [isValidRoomId, loading, isAuthenticated, roomId]);
 
+  // Private: fetch meta.
   useEffect(() => {
+    if (!isValidRoomId) return;
     if (loading) return;
     if (!isAuthenticated) return;
-    if (!roomId) return;
 
     let cancelled = false;
 
-    const run = async () => {
+    (async () => {
       try {
         setBoardStatus("checking");
         const meta = await getWhiteboardMeta(roomId);
@@ -130,36 +142,25 @@ export default function WhiteboardPage() {
         if (code === 404) setBoardStatus("not_found");
         else setBoardStatus("error");
       }
-    };
-
-    run();
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [loading, isAuthenticated, roomId]);
+  }, [isValidRoomId, loading, isAuthenticated, roomId]);
 
-  const Backdrop = () => {
+  // AFTER all hooks thn safe to return gated UI.
+  if (!isValidRoomId) {
+    if (!isAuthenticated) return <NotFoundPage />;
     return (
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundColor: "#f8fafc",
-          backgroundImage:
-            "linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
-          backgroundPosition: "center",
-        }}
+      <NotFoundPage
+        title="Whiteboard not found"
+        description="This whiteboard link is invalid. Please open a board from your dashboard."
       />
     );
-  };
-
-  useEffect(() => {
-    if (!isAuthenticated) setPublicExists(null);
-  }, [roomId, isAuthenticated]);
+  }
 
   if (!isAuthenticated) {
-    // while checking existence (anti “sneak peek” + anti enumeration)
     if (loading || publicExists === null) {
       return (
         <div className="relative h-screen w-screen overflow-hidden">
@@ -173,7 +174,6 @@ export default function WhiteboardPage() {
       );
     }
 
-    //  kalau board tidak ada, tampilkan generic 404 (bukan whiteboard not found)
     if (publicExists === false) {
       return <NotFoundPage />;
     }
@@ -205,10 +205,7 @@ export default function WhiteboardPage() {
     );
   }
 
-  if (
-    isAuthenticated &&
-    (boardStatus === "checking" || boardStatus === "idle")
-  ) {
+  if (boardStatus === "checking" || boardStatus === "idle") {
     return (
       <div className="relative h-screen w-screen overflow-hidden">
         <Backdrop />
@@ -240,7 +237,6 @@ export default function WhiteboardPage() {
       />
     );
   }
-
   return (
     <RoomLayout
       roomId={roomId}

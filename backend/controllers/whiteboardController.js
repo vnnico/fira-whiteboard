@@ -54,7 +54,7 @@ export async function getWhiteboards(req, res, next) {
       members: userId,
       createdBy: { $ne: userId },
     })
-      .select(fields)
+      .select("roomId title createdBy members locked createdAt updatedAt")
       .sort({ updatedAt: -1 })
       .lean();
 

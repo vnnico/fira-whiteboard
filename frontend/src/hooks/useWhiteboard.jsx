@@ -345,14 +345,6 @@ export function useWhiteboard(roomId) {
           userId: myUserId,
           locked: true,
         });
-        socket.emit(
-          "element-lock",
-          { roomId, elementId, locked: true },
-          (ack) => {
-            if (ack && !ack.ok) {
-            }
-          }
-        );
       },
       unlockElement: (elementId) => {
         if (!canEdit) return;
@@ -402,6 +394,8 @@ export function useWhiteboard(roomId) {
     canEdit,
     locked,
     timerState,
+    connectionState,
+    isHydrated,
   ]);
 
   return api;

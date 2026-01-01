@@ -48,6 +48,7 @@ export default function DashboardPage() {
         setLoading(true);
         const data = await getWhiteboards();
         setMyBoards(data.myWhiteboards || []);
+
         setJoinedBoards(data.joinedWhiteboards || []);
       } catch (err) {
         showToast("Failed to load whiteboards", "error");

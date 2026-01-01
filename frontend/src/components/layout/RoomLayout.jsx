@@ -29,11 +29,6 @@ export default function RoomLayout({
 
   const normId = (v) => (v === null || v === undefined ? "" : String(v));
 
-  const voiceById = new Map(
-    (voiceState?.participants || []).map((p) => [normId(p.id), p])
-  );
-  const [voiceStateMap, setVoiceStateMap] = useState(() => new Map());
-
   const myId = normId(user?.id);
   const lkById = new Map(
     (voiceState?.participants || []).map((p) => [normId(p.id), p])
@@ -94,7 +89,7 @@ export default function RoomLayout({
 
   const audioUnlockOnceRef = useRef(false);
 
-  const { needsAudioStart, startAudioPlayback, leaveVoice } = voiceState;
+  const { needsAudioStart, startAudioPlayback } = voiceState;
 
   const handleAnyUserGesture = async () => {
     if (!needsAudioStart) return;
@@ -242,83 +237,6 @@ export default function RoomLayout({
   useEffect(() => {
     participantsRef.current = participantsForUI;
   }, [participantsForUI]);
-
-  useEffect(() => {
-    const handler = (e) => {
-      const payload = e?.detail;
-      if (!payload) return;
-
-      // forward ke useVoiceState (target user akan memproses)
-      window.dispatchEvent(
-        new CustomEvent("voice-moderation", { detail: payload })
-      );
-
-      const action = String(payload.action || "");
-      const targetId = String(payload.targetUserId || "");
-      const actorId = String(payload.actorUserId || "");
-
-      window.dispatchEvent(
-        new CustomEvent("voice-moderation", { detail: payload })
-      );
-
-      // toast name lookup pakai ref agar tidak dependency-loop
-      const list = participantsRef.current || [];
-      const targetName =
-        list.find((p) => String(p.id) === targetId)?.name || "A participant";
-
-      if (targetId === myId) {
-        if (action === "mute") showToast("You were muted by the host", "info");
-
-        return;
-      }
-
-      if (actorId === myId) {
-        if (action === "mute") showToast(`Muted ${targetName}`, "info");
-      }
-    };
-
-    window.addEventListener("voice-moderation-raw", handler);
-    return () => window.removeEventListener("voice-moderation-raw", handler);
-  }, [myId, showToast]);
-
-  useEffect(() => {
-    const onSnapshot = (e) => {
-      const snap = e?.detail?.snapshot || {};
-      const next = new Map();
-      for (const [uid, st] of Object.entries(snap)) {
-        next.set(String(uid), {
-          inVoice: !!st?.inVoice,
-          deafened: !!st?.deafened,
-        });
-      }
-      setVoiceStateMap(next);
-    };
-
-    const onUpdate = (e) => {
-      const p = e?.detail;
-      if (!p?.userId) return;
-
-      const uid = String(p.userId);
-      setVoiceStateMap((prev) => {
-        const next = new Map(prev);
-        const cur = next.get(uid) || { inVoice: false, deafened: false };
-
-        next.set(uid, {
-          inVoice: typeof p.inVoice === "boolean" ? p.inVoice : !!cur.inVoice,
-          deafened:
-            typeof p.deafened === "boolean" ? p.deafened : !!cur.deafened,
-        });
-        return next;
-      });
-    };
-
-    window.addEventListener("voice-state-snapshot-raw", onSnapshot);
-    window.addEventListener("voice-state-raw", onUpdate);
-    return () => {
-      window.removeEventListener("voice-state-snapshot-raw", onSnapshot);
-      window.removeEventListener("voice-state-raw", onUpdate);
-    };
-  }, []);
 
   const handleTitleSubmit = async (e) => {
     e?.preventDefault();

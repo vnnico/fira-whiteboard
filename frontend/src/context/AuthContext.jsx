@@ -1,5 +1,6 @@
 import React, { createContext, useEffect, useState } from "react";
 import * as authApi from "../services/authApi";
+import { setAuthToken } from "../services/apiClient";
 
 export const AuthContext = createContext(null);
 
@@ -20,6 +21,7 @@ export function AuthProvider({ children }) {
       } catch (err) {
         setToken(null);
         localStorage.removeItem("fira_token");
+        setAuthToken(null);
       } finally {
         setLoading(false);
       }
@@ -41,6 +43,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setToken(null);
     localStorage.removeItem("fira_token");
+    setAuthToken(null);
   };
 
   const value = {

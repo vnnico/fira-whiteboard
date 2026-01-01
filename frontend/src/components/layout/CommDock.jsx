@@ -85,7 +85,7 @@ export default function CommDock({
     return (
       <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex flex-col items-center gap-2">
         <div className="flex items-center rounded-full bg-white px-6 py-3 shadow-xl ring-1 ring-slate-900/5">
-          <span className="flex items-center gap-2 text-sm font-medium text-slate-600 fw-bold me-1">
+          <span className="flex items-center gap-2 text-sm font-medium text-slate-600 font-bold me-1">
             <svg
               className="h-4 w-4 animate-spin text-emerald-500"
               viewBox="0 0 24 24"

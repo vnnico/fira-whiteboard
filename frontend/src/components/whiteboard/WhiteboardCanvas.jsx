@@ -408,7 +408,7 @@ export default function WhiteboardCanvas({
     ]
   );
 
-  const releaseMySelectedLock = (reason) => {
+  const releaseMySelectedLock = useCallback(() => {
     if (!selectedId) return;
     if (writingElementId) return;
 
@@ -419,7 +419,7 @@ export default function WhiteboardCanvas({
     unlockElement(selectedId);
     deselect();
     setAction(ActionTypes.NONE);
-  };
+  }, [selectedId, writingElementId, locks, myUserId, unlockElement, deselect]);
 
   // Coordinates Helper
   // Get relative position. Bridge between world coordinates and screen coordinates.
@@ -1143,10 +1143,10 @@ export default function WhiteboardCanvas({
 
     // window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pageHide", onPageHide);
+    window.addEventListener("pagehide", onPageHide);
 
     return () => {
-      window.removeEventListener("pageHide", onPageHide);
+      window.removeEventListener("pagehide", onPageHide);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [selectedId, locks, myUserId, writingElementId]);

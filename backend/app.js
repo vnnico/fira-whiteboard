@@ -1,10 +1,18 @@
 import express from "express";
 import cors from "cors";
-import { CLIENT_ORIGIN } from "./config/env.js";
+import process from "process";
 import routes from "./routes/index.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
+
+process.on("unhandledRejection", (err) => {
+  console.error("[process] unhandledRejection:", err);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[process] uncaughtException:", err);
+});
 
 app.use(
   cors({

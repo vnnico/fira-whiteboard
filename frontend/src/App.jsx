@@ -8,18 +8,11 @@ import NotFoundPage from "./pages/NotFoundPage";
 
 function PrivateRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
-  const [delayDone, setDelayDone] = useState(false);
 
-  // Temporary for simulate loading
-  useEffect(() => {
-    const t = setTimeout(() => setDelayDone(true), 0);
-    return () => clearTimeout(t);
-  }, []);
-
-  if (loading || !delayDone) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="animate-pulse text-sm text-fira-primary fw-bold">
+        <div className="animate-pulse text-sm text-fira-primary font-bold">
           Loading...
         </div>
       </div>

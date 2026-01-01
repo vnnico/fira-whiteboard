@@ -239,12 +239,7 @@ export function useVoiceState({ roomId }) {
     s.on("connect", () => {
       s.emit("join-room", { roomId: String(roomId) });
 
-      s.emit("voice:state", {
-        roomId: String(roomId),
-        inVoice: false,
-        micEnabled: false,
-        deafened: false,
-      });
+      emitLocalVoiceState();
     });
 
     s.on("voice-state-snapshot", ({ snapshot }) => {
@@ -319,8 +314,9 @@ export function useVoiceState({ roomId }) {
         s.disconnect();
       } catch {}
       voiceSocketRef.current = null;
+      setRemoteVoiceStates({});
     };
-  }, [roomId, emitLocalVoiceState, setAllRemoteAudioMuted]);
+  }, [roomId, token, emitLocalVoiceState, setAllRemoteAudioMuted]);
 
   const syncParticipants = useCallback(() => {
     const room = roomRef.current;
