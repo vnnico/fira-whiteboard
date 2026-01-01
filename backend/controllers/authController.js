@@ -6,8 +6,6 @@ import {
   generateRandomDisplayName,
 } from "../models/userModel.js";
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 function signToken(user) {
   return jwt.sign({ sub: user.id, username: user.username }, JWT_SECRET, {
     expiresIn: "2h",
@@ -17,10 +15,7 @@ function signToken(user) {
 export async function login(req, res, next) {
   try {
     const { username, password } = req.body;
-
     const user = await findByUsername(username);
-
-    console.log(user);
     if (!user || user.password !== password) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -30,7 +25,7 @@ export async function login(req, res, next) {
 
     const token = signToken(user);
 
-    res.json({
+    return res.status(200).json({
       token,
       user: {
         id: user.id,
@@ -50,7 +45,7 @@ export async function getMe(req, res, next) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({
+    return res.status(200).json({
       id: user.id,
       username: user.username,
       displayName: user.displayName,

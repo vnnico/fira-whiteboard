@@ -76,12 +76,9 @@ export function setVoiceState(roomId, userId, patch) {
   const entry = getUserEntry(roomId, userId);
   if (!entry) return null;
 
-  if (patch && typeof patch === "object") {
-    if (typeof patch.inVoice === "boolean") entry.inVoice = patch.inVoice;
-    if (typeof patch.deafened === "boolean") entry.deafened = patch.deafened;
-    if (typeof patch.micEnabled === "boolean")
-      entry.micEnabled = patch.micEnabled;
-  }
+  if (patch.InVoice) entry.inVoice = patch.inVoice;
+  if (patch.deafened) entry.deafened = patch.deafened;
+  if (patch.micEnabled) entry.micEnabled = patch.micEnabled;
 
   // Kalau tidak in voice, deafened tidak relevan.
   if (!entry.inVoice) entry.deafened = false;

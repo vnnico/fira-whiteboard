@@ -8,11 +8,7 @@ import {
   LIVEKIT_API_KEY,
   LIVEKIT_API_SECRET,
 } from "../config/env.js";
-import {
-  getBoardById,
-  ensureRoleForUser,
-  getPermissionsForUser,
-} from "../models/whiteboardStore.js";
+import { Board } from "../models/whiteboardModel.js";
 import { getVoiceNameSpace } from "../sockets/index.js";
 import { setVoiceState } from "../models/voiceStateStore.js";
 
@@ -25,11 +21,19 @@ function toHttpHost(livekitUrl) {
     .replace(/^ws:\/\//i, "http://");
 }
 
-async function requireOwner(roomId, userId) {
-  ensureRoleForUser(roomId, userId);
+function assertOwner(board, userId) {
+  const uid = String(userId || "");
+  if (!uid || !board) {
+    const err = new Error("Unauthorized");
+    err.status = 401;
+    throw err;
+  }
 
-  const perms = getPermissionsForUser(roomId, userId);
-  if (!perms || perms.role !== "OWNER") {
+  const isOwner =
+    (board.createdBy && String(board.createdBy) === uid) ||
+    String(board.roles?.[uid] || "") === "OWNER";
+
+  if (!isOwner) {
     const err = new Error("Only owner can moderate voice");
     err.status = 403;
     throw err;
@@ -39,27 +43,16 @@ async function requireOwner(roomId, userId) {
 async function getMicrophoneTrackSid(roomName, identity) {
   if (!roomService) return null;
 
-  const p = await roomService.getParticipant(roomName, identity);
-  const tracks = Array.isArray(p?.tracks) ? p.tracks : [];
-
-  const mic = tracks.find(
-    (t) => trackSourceToString(t.source) === "microphone"
-  );
-  return mic?.sid || null;
-}
-
-async function getOtherTrackSids(roomName, targetIdentity) {
-  if (!roomService) return [];
-  const participants = await roomService.listParticipants(roomName);
-  const out = [];
-
-  for (const p of participants || []) {
-    if (String(p.identity) === String(targetIdentity)) continue;
-    for (const t of p.tracks || []) {
-      if (t?.sid) out.push(t.sid);
-    }
+  try {
+    const p = await roomService.getParticipant(roomName, identity);
+    const tracks = Array.isArray(p?.tracks) ? p.tracks : [];
+    const mic = tracks.find(
+      (t) => trackSourceToString(t.source) === "microphone"
+    );
+    return mic?.sid || null;
+  } catch {
+    return null;
   }
-  return out;
 }
 
 function emitVoiceModeration(roomId, payload) {
@@ -95,10 +88,10 @@ export async function createToken(req, res, next) {
       return res.status(400).json({ message: "roomId is required" });
     }
 
-    const board = await getBoardById(roomId);
-    if (!board) {
-      return res.status(404).json({ message: "Board not found" });
-    }
+    const board = await Board.findOne({ roomId: String(roomId) })
+      .select("roomId title createdBy members roles locked")
+      .lean();
+    if (!board) return res.status(404).json({ message: "Board not found" });
 
     const userId = String(req.user?.id);
     if (!userId) {
@@ -144,7 +137,7 @@ export async function createToken(req, res, next) {
 
     const token = await at.toJwt();
 
-    return res.json({
+    return res.status(200).json({
       token,
       url: LIVEKIT_URL,
       roomName,
@@ -164,13 +157,19 @@ export async function moderateMute(req, res, next) {
         .json({ message: "roomId and targetUserId are required" });
     }
 
-    const board = await getBoardById(roomId);
+    const rid = String(roomId);
+    const targetId = String(targetUserId);
+
+    const board = await Board.findOne({ roomId: rid })
+      .select("roomId createdBy members roles")
+      .lean();
     if (!board) return res.status(404).json({ message: "Board not found" });
 
-    const actorId = String(req.user?.id);
+    const actorId = String(req.user?.id || "");
     if (!actorId) return res.status(401).json({ message: "Unauthorized" });
 
-    await requireOwner(String(roomId), actorId);
+    // assertOwner harus menerima board object
+    assertOwner(board, actorId);
 
     if (!roomService) {
       return res
@@ -178,34 +177,46 @@ export async function moderateMute(req, res, next) {
         .json({ message: "LiveKit RoomService is not configured" });
     }
 
-    const roomName = String(roomId);
-    const targetId = String(targetUserId);
-
-    // privacy-safe: hanya mute, tidak ada unmute
-    const micSid = await getMicrophoneTrackSid(roomName, targetId);
+    const roomName = rid;
+    let micSid = await getMicrophoneTrackSid(roomName, targetId);
     if (!micSid) {
-      return res.status(404).json({
-        message: "Target has no microphone track (not in voice or no mic)",
-      });
+      await new Promise((r) => setTimeout(r, 150));
+      micSid = await getMicrophoneTrackSid(roomName, targetId);
     }
 
-    await roomService.mutePublishedTrack(roomName, targetId, micSid, true);
-
-    const nextState = setVoiceState(String(roomId), targetId, {
+    const nextState = setVoiceState(rid, targetId, {
       inVoice: true,
       micEnabled: false,
     });
-    emitVoiceState(roomId, targetId, nextState, { source: "owner" });
+    emitVoiceState(rid, targetId, nextState, { source: "owner" });
 
-    emitVoiceModeration(roomId, {
+    emitVoiceModeration(rid, {
       action: "mute",
-      roomId: String(roomId),
+      roomId: rid,
       targetUserId: targetId,
       actorUserId: actorId,
       ts: Date.now(),
     });
 
-    return res.json({ ok: true });
+    if (micSid) {
+      try {
+        await roomService.mutePublishedTrack(roomName, targetId, micSid, true);
+      } catch (e) {
+        return res.status(200).json({
+          ok: true,
+          warning:
+            "Mute applied via client moderation, server-side mute may have raced",
+        });
+      }
+    } else {
+      return res.status(200).json({
+        ok: true,
+        warning:
+          "Target has no microphone track yet (not in voice or not publishing mic)",
+      });
+    }
+
+    return res.status(200).json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -221,28 +232,31 @@ export async function moderateDeafen(req, res, next) {
       });
     }
 
-    const board = await getBoardById(roomId);
+    const board = await Board.findOne({ roomId: String(roomId) })
+      .select("roomId createdBy members roles")
+      .lean();
     if (!board) return res.status(404).json({ message: "Board not found" });
 
     const actorId = String(req.user?.id);
     if (!actorId) return res.status(401).json({ message: "Unauthorized" });
 
-    await requireOwner(String(roomId), actorId);
+    // pastikan hanya owner
+    assertOwner(board, actorId);
 
-    if (!roomService) {
-      return res
-        .status(500)
-        .json({ message: "LiveKit RoomService is not configured" });
-    }
-
-    const roomName = String(roomId);
     const targetId = String(targetUserId);
 
-    const patch = { inVoice: true, deafened: !!deafened };
-    if (deafened) patch.micEnabled = false; // deafen memaksa mic mati
+    const patch = {
+      inVoice: true,
+      deafened: !!deafened,
+      micEnabled: false,
+    };
+
     const nextState = setVoiceState(String(roomId), targetId, patch);
+
+    // broadcast state ke semua (UI sync)
     emitVoiceState(roomId, targetId, nextState, { source: "owner" });
 
+    // broadcast moderation event (target akan apply ke LiveKit di client)
     emitVoiceModeration(roomId, {
       action: deafened ? "deafen" : "undeafen",
       roomId: String(roomId),
@@ -251,7 +265,7 @@ export async function moderateDeafen(req, res, next) {
       ts: Date.now(),
     });
 
-    return res.json({ ok: true });
+    return res.status(200).json({ ok: true });
   } catch (err) {
     next(err);
   }

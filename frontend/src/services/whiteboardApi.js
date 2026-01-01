@@ -7,11 +7,6 @@ export async function checkWhiteboardExists(roomId) {
   return !!data?.exists;
 }
 
-export async function getWhiteboard(roomId) {
-  const { data } = await api.get(`/whiteboards/${roomId}`);
-  return data;
-}
-
 export async function getWhiteboardMeta(roomId) {
   const { data } = await api.get(`/whiteboards/${roomId}/meta`);
   return data;

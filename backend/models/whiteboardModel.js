@@ -42,18 +42,4 @@ const boardSchema = new mongoose.Schema(
 
 boardSchema.index({ createdBy: 1 });
 
-export async function recordMemberJoin(roomId, userId) {
-  const rid = String(roomId || "");
-  const uid = String(userId || "");
-  if (!rid || !uid) return false;
-
-  const res = await Board.updateOne(
-    { roomId: rid },
-    { $addToSet: { members: uid }, $set: { updatedAt: new Date() } },
-    { upsert: false }
-  );
-
-  return res.matchedCount > 0;
-}
-
 export const Board = mongoose.model("Board", boardSchema);

@@ -3,7 +3,6 @@ import { Router } from "express";
 import {
   createWhiteboard,
   getWhiteboards,
-  getWhiteboard,
   getWhiteboardMeta,
   updateTitle,
   checkWhiteboardExists,
@@ -18,7 +17,6 @@ router.post("/", requireAuth, getWhiteboards);
 router.post("/create", requireAuth, createWhiteboard);
 router.get("/:roomId/exists", checkWhiteboardExists);
 router.get("/:roomId/meta", requireAuth, getWhiteboardMeta);
-router.get("/:roomId", requireAuth, getWhiteboard);
 // update title
 router.patch("/:roomId/title", requireAuth, updateTitle);
 router.delete("/:roomId", requireAuth, deleteWhiteboard);

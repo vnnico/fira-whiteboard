@@ -1,74 +1,38 @@
-import {
-  getAllBoards,
-  updateBoardTitle,
-  createBoard,
-  getBoardById,
-  loadBoardFromDb,
-  deleteBoard,
-} from "../models/whiteboardStore.js";
-import { Board } from "../models/whiteboardModel.js";
+import { randomUUID } from "crypto";
+import { Board, Roles } from "../models/whiteboardModel.js";
+import { getWhiteboardNamespace } from "../sockets/index.js";
 
-import { getWhiteboardNameSpace } from "../sockets/index.js";
-
-// GET /api/whiteboards/:roomId/exists
-
+// GET /api/whiteboards/:roomId/exists  (NO auth)
 export async function checkWhiteboardExists(req, res, next) {
   try {
     const rid = String(req.params.roomId || "");
     if (!rid) return res.status(400).json({ message: "Missing roomId" });
 
-    let board = getBoardById(rid);
+    const exists = await Board.exists({ roomId: rid });
+    if (!exists) return res.status(404).json({ exists: false });
 
-    console.log(board);
-    if (!board) board = await loadBoardFromDb(rid);
-
-    if (!board) return res.status(404).json({ exists: false });
     return res.status(200).json({ exists: true });
   } catch (err) {
     next(err);
   }
 }
 
-// GET /api/whiteboards/:roomId
-export async function getWhiteboard(req, res, next) {
-  try {
-    const userId = String(req.user.id);
-
-    // Ambil semua board yang dibuat oleh user, atau user pernah join (members)
-    const boards = await Board.find({
-      $or: [{ createdBy: userId }, { members: userId }],
-    })
-      .select("roomId title createdBy members createdAt updatedAt locked")
-      .sort({ updatedAt: -1 })
-      .lean();
-
-    const myWhiteboards = boards.filter((b) => String(b.createdBy) === userId);
-
-    const joinedWhiteboards = boards.filter(
-      (b) =>
-        String(b.createdBy) !== userId && (b.members || []).includes(userId)
-    );
-
-    res.status(200).json({ myWhiteboards, joinedWhiteboards });
-  } catch (err) {
-    next(err);
-  }
-}
-
+// GET /api/whiteboards/:roomId/meta (auth)
 export async function getWhiteboardMeta(req, res, next) {
   try {
     const rid = String(req.params.roomId || "");
     if (!rid) return res.status(400).json({ message: "Missing roomId" });
 
-    let board = getBoardById(rid);
-    if (!board) board = await loadBoardFromDb(rid);
+    const board = await Board.findOne({ roomId: rid })
+      .select("roomId title createdBy locked")
+      .lean();
 
     if (!board) return res.status(404).json({ message: "Board not found" });
 
     return res.status(200).json({
-      roomId: board.roomId,
-      title: board.title,
-      createdBy: board.createdBy,
+      roomId: String(board.roomId),
+      title: board.title || "Untitled Whiteboard",
+      createdBy: String(board.createdBy),
       locked: !!board.locked,
     });
   } catch (err) {
@@ -76,68 +40,55 @@ export async function getWhiteboardMeta(req, res, next) {
   }
 }
 
-// POST /api/whiteboards
+// POST /api/whiteboards (auth) - list dashboard
 export async function getWhiteboards(req, res, next) {
   try {
-    const userId = req.user.id;
-    const allBoards = getAllBoards();
+    const userId = String(req.user.id);
 
-    console.log("Get all boards: ", allBoards);
-    const myWhiteboards =
-      allBoards.length > 0
-        ? allBoards?.filter((b) => b.createdBy === userId)
-        : [];
-    const joinedWhiteboards =
-      allBoards.length > 0
-        ? allBoards?.filter(
-            (b) => b.members.includes(userId) && b.createdBy !== userId
-          )
-        : [];
+    const myWhiteboards = await Board.find({ createdBy: userId })
+      .select("roomId title createdBy members locked createdAt updatedAt")
+      .sort({ updatedAt: -1 })
+      .lean();
 
-    console.log(allBoards);
+    const joinedWhiteboards = await Board.find({
+      members: userId,
+      createdBy: { $ne: userId },
+    })
+      .select(fields)
+      .sort({ updatedAt: -1 })
+      .lean();
 
-    res.status(200).json({
-      myWhiteboards,
-      joinedWhiteboards,
-    });
+    return res.status(200).json({ myWhiteboards, joinedWhiteboards });
   } catch (err) {
     next(err);
   }
 }
 
-// PATCH /api/whiteboards/:roomId/title (API BARU)
-export async function updateTitle(req, res, next) {
-  try {
-    const { roomId } = req.params;
-    const { title } = req.body;
-
-    // Validasi ownership bisa ditambah di sini
-    const board = updateBoardTitle(roomId, title);
-
-    if (!board) return res.status(404).json({ message: "Board not found" });
-    getWhiteboardNameSpace()
-      ?.to(roomId)
-      .emit("title-update", { title: board.title });
-
-    res.status(200).json({ board });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// POST /api/whiteboards/create
+// POST /api/whiteboards/create (auth)
 export async function createWhiteboard(req, res, next) {
   try {
-    const userId = req.user?.id || null;
-    const board = await createBoard({ createdBy: userId });
+    const userId = String(req.user.id);
+    const roomId = randomUUID();
 
-    res.status(201).json({
+    const board = await Board.create({
+      roomId,
+      title: "Untitled Whiteboard",
+      createdBy: userId,
+      members: [userId],
+      roles: { [userId]: Roles.OWNER },
+      locked: false,
+      elements: [],
+      schemaVersion: 1,
+    });
+
+    return res.status(201).json({
       roomId: board.roomId,
       whiteboard: {
         roomId: board.roomId,
         title: board.title,
-        members: board.members,
         createdBy: board.createdBy,
+        members: board.members,
+        locked: !!board.locked,
         createdAt: board.createdAt,
         elements: board.elements,
       },
@@ -147,25 +98,67 @@ export async function createWhiteboard(req, res, next) {
   }
 }
 
-// DELETE /api/whiteboards/:roomId
+// PATCH /api/whiteboards/:roomId/title (auth)
+export async function updateTitle(req, res, next) {
+  try {
+    const rid = String(req.params.roomId || "");
+    if (!rid) return res.status(400).json({ message: "Missing roomId" });
+
+    const nextTitle =
+      String(req.body?.title || "").trim() || "Untitled Whiteboard";
+
+    const board = await Board.findOneAndUpdate(
+      { roomId: rid },
+      { $set: { title: nextTitle, updatedAt: new Date() } },
+      { new: true }
+    )
+      .select("roomId title createdBy members locked createdAt updatedAt")
+      .lean();
+
+    if (!board) return res.status(404).json({ message: "Board not found" });
+
+    // broadcast realtime title update to room
+    const ns = getWhiteboardNamespace();
+    if (ns) ns.to(rid).emit("title-update", { title: board.title });
+
+    return res.status(200).json({ board });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// DELETE /api/whiteboards/:roomId (auth)
 export async function deleteWhiteboard(req, res, next) {
   try {
     const userId = String(req.user.id);
-    const { roomId } = req.params;
+    const rid = String(req.params.roomId || "");
+    if (!rid) return res.status(400).json({ message: "Missing roomId" });
 
-    let board = getBoardById(roomId);
-    if (!board) board = await loadBoardFromDb(roomId);
+    const board = await Board.findOne({ roomId: rid })
+      .select("roomId createdBy")
+      .lean();
 
     if (!board) return res.status(404).json({ message: "Board not found" });
-    if (String(board.createdBy) !== userId) {
+    if (String(board.createdBy) !== userId)
       return res.status(403).json({ message: "Forbidden" });
+
+    await Board.deleteOne({ roomId: rid });
+
+    // Kick everyone inside the room and force them out
+    const ns = getWhiteboardNamespace();
+    if (ns) {
+      ns.to(rid).emit("board-deleted", { roomId: rid });
+
+      const sockets = await ns.in(rid).fetchSockets();
+      for (const s of sockets) {
+        try {
+          s.emit("kicked", { roomId: rid, reason: "Board was deleted" });
+          s.disconnect(true);
+        } catch {}
+      }
     }
 
-    await deleteBoard(roomId);
-
-    getWhiteboardNameSpace()?.to(roomId).emit("board-deleted", { roomId });
-
-    res.status(200).json({ success: true });
+    return res.status(200).json({ success: true });
   } catch (err) {
     next(err);
   }

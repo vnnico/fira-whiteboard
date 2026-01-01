@@ -33,10 +33,14 @@ export function registerVoiceHandlers(io, socket) {
     const uid = String(socket.user?.id || socket.data?.userId || "");
     if (!rid || !uid) return;
 
-    const next = setVoiceState(rid, uid, { inVoice, deafened, micEnabled });
+    const patch = {};
+    if (typeof inVoice === "boolean") patch.inVoice = inVoice;
+    if (typeof deafened === "boolean") patch.deafened = deafened;
+    if (typeof micEnabled === "boolean") patch.micEnabled = micEnabled;
+
+    const next = setVoiceState(rid, uid, patch);
     if (!next) return;
 
-    console.log("ININEXT: ", next);
     io.to(rid).emit("voice:state", {
       roomId: rid,
       userId: uid,

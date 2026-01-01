@@ -1,3 +1,5 @@
+// Udah ga pake lagi
+
 import { randomUUID } from "crypto";
 import { Board, Roles as RoleEnum } from "./whiteboardModel.js";
 
