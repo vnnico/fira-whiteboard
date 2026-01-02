@@ -5,6 +5,7 @@ const SERVER_URL = "http://localhost:3001";
 export function createChatSocket(token) {
   return io(`${SERVER_URL}/chat`, {
     auth: { token },
+    transports: ["websocket"],
   });
 }
 

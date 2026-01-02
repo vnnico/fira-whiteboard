@@ -8,38 +8,70 @@ import {
   FiEdit2,
 } from "react-icons/fi";
 import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
+import ChatPanel from "../chat/ChatPanel";
+
+const formatDeviceLabel = (d) => {
+  const raw = String(d?.label || "").trim();
+  const fallback = `Microphone (${String(d?.deviceId || "").slice(0, 6)}…)`;
+
+  if (!raw) return fallback;
+
+  const max = 48;
+  if (raw.length <= max) return raw;
+
+  return raw.slice(0, max - 1) + "…";
+};
+
+function controlButtonClass(variant = "secondary", disabled = false) {
+  const base =
+    "relative flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200 focus:outline-none";
+
+  const variants = {
+    dark: "bg-slate-800 text-white hover:bg-slate-900",
+    secondary: "bg-slate-100 text-slate-600 hover:bg-slate-200",
+    danger: "bg-rose-50 text-rose-500 hover:bg-rose-100",
+    "danger-ghost": "text-rose-500 hover:bg-rose-50 hover:text-rose-600",
+    success: "bg-emerald-500 text-white hover:bg-emerald-600",
+  };
+
+  const cls = `${base} ${variants[variant] || variants.secondary}`;
+  return disabled ? `${cls} opacity-40 cursor-not-allowed` : cls;
+}
 
 export default function ManagementSidebar({
   isOpen,
   onClose,
+  activeTab = "participants",
   participants = [],
   voiceState,
   myRole,
   onKick,
+  onTabChange,
   onSetRole,
   onMuteParticipant,
   onToggleDeafenParticipant,
+  chatState,
+  roomId,
+  myUserId,
 }) {
-  const [activeTab, setActiveTab] = useState("participants");
-
   return (
     <>
       {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-black/20  md:bg-black/10 md:backdrop-blur-0"
           onClick={onClose}
         />
       )}
 
       <aside
-        className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-white shadow-2xl transition-transform duration-300 ease-in-out md:w-80 ${
+        className={`fixed inset-y-0 right-0 z-50 flex w-full flex-col bg-white shadow-2xl transition-transform duration-300 ease-in-out sm:w-[360px] md:w-[420px] ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
           <div className="flex gap-4">
             <button
-              onClick={() => setActiveTab("participants")}
+              onClick={() => onTabChange?.("participants")}
               className={`text-sm font-semibold transition-colors ${
                 activeTab === "participants"
                   ? "text-slate-900 border-b-2 border-slate-900"
@@ -50,7 +82,7 @@ export default function ManagementSidebar({
             </button>
 
             <button
-              onClick={() => setActiveTab("chat")}
+              onClick={() => onTabChange?.("chat")}
               className={`text-sm font-semibold transition-colors ${
                 activeTab === "chat"
                   ? "text-slate-900 border-b-2 border-slate-900"
@@ -69,65 +101,66 @@ export default function ManagementSidebar({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 min-h-0 overflow-y-auto ">
           {activeTab === "participants" ? (
-            <div className="space-y-3">
-              {voiceState?.connectionState === "connected" && (
-                <div className="rounded-xl border border-slate-100 bg-white p-3">
-                  <div className="mb-2 text-xs font-semibold text-slate-500">
-                    Microphone
+            <div className="h-full overflow-y-auto p-3">
+              <div className="space-y-2.5">
+                {voiceState?.connectionState === "connected" && (
+                  <div className="rounded-xl border border-slate-100 bg-white p-3">
+                    <div className="mb-2 text-xs font-semibold text-slate-500">
+                      Microphone
+                    </div>
+
+                    <select
+                      value={voiceState.selectedAudioInputId || "default"}
+                      onChange={(e) =>
+                        voiceState.selectAudioInput?.(e.target.value)
+                      }
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="default">Default</option>
+                      {(voiceState.audioInputs || []).map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {formatDeviceLabel(d)}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => voiceState.refreshDevices?.()}
+                      className="mt-2 text-xs text-slate-500 hover:text-slate-700"
+                    >
+                      Refresh device list
+                    </button>
                   </div>
+                )}
 
-                  <select
-                    value={voiceState.selectedAudioInputId || "default"}
-                    onChange={(e) =>
-                      voiceState.selectAudioInput?.(e.target.value)
-                    }
-                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-                  >
-                    <option value="default">Default</option>
-                    {(voiceState.audioInputs || []).map((d) => (
-                      <option key={d.deviceId} value={d.deviceId}>
-                        {d.label || `Microphone (${d.deviceId.slice(0, 6)}…)`}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={() => voiceState.refreshDevices?.()}
-                    className="mt-2 text-xs text-slate-500 hover:text-slate-700"
-                  >
-                    Refresh device list
-                  </button>
-                </div>
-              )}
-
-              {participants.map((p) => (
-                <ParticipantCard
-                  key={p.id}
-                  participant={p}
-                  myRole={myRole}
-                  voiceState={voiceState}
-                  onKick={onKick}
-                  onSetRole={onSetRole}
-                  onMuteParticipant={onMuteParticipant}
-                  onToggleDeafenParticipant={onToggleDeafenParticipant}
-                />
-              ))}
+                {participants.map((p) => (
+                  <ParticipantCard
+                    key={p.id}
+                    participant={p}
+                    myRole={myRole}
+                    voiceState={voiceState}
+                    onKick={onKick}
+                    onSetRole={onSetRole}
+                    onMuteParticipant={onMuteParticipant}
+                    onToggleDeafenParticipant={onToggleDeafenParticipant}
+                  />
+                ))}
+              </div>
             </div>
           ) : (
-            <div className="flex h-full flex-col justify-end">
-              <div className="flex-1 flex items-center justify-center text-sm text-slate-400">
-                <p>Chat messages will appear here.</p>
-              </div>
-              <div className="mt-4 border-t border-slate-100 pt-4">
-                <input
-                  type="text"
-                  placeholder="Type a message..."
-                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-                />
-              </div>
+            <div className="h-full min-h-0 overflow-hidden p-3">
+              <ChatPanel
+                roomId={roomId}
+                connectionState={chatState?.connectionState}
+                messages={chatState?.messages || []}
+                myUserId={myUserId}
+                typingUsers={chatState?.typingUsers || {}}
+                onSend={(t) => chatState?.sendMessage?.(t)}
+                onTyping={(v) => chatState?.setTyping?.(v)}
+              />
             </div>
           )}
         </div>
@@ -149,7 +182,6 @@ function ParticipantCard({
   const isSelf = !!participant.isMe;
   const isEditor = String(participant.role || "VIEWER") === "EDITOR";
 
-  // Support both shapes:
   // - participant.voice.{inVoice,micEnabled,deafened}
   // - legacy: participant.isInVoice / participant.isMuted / participant.isDeafened
   const v = participant.voice || {};
@@ -172,7 +204,6 @@ function ParticipantCard({
 
   const initial = getInitials(participant.name, participant.id);
   const bg = getAvatarColor(participant.id);
-  const statusLabel = inVoice ? "In voice" : "Not in voice";
   const canSelfControl = isSelf && voiceState?.connectionState === "connected";
 
   return (
@@ -198,17 +229,9 @@ function ParticipantCard({
               <span className="ml-2 text-xs text-slate-400">(You)</span>
             )}
           </div>
-
-          <div className="text-[10px] uppercase tracking-wider text-slate-400">
-            {statusLabel} • {participant.role ?? "participant"}
-            {inVoice && (
-              <>
-                {" "}
-                • {deafened ? "deafened" : "hearing"} •{" "}
-                {micKnown ? (isMuted ? "mic off" : "mic on") : "mic ?"}
-              </>
-            )}
-          </div>
+          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-slate-500">
+            {String(participant.role || "VIEWER").toUpperCase()}
+          </span>
         </div>
       </div>
 
@@ -221,11 +244,10 @@ function ParticipantCard({
               onSetRole?.(participant.id, isEditor ? "VIEWER" : "EDITOR")
             }
             title={isEditor ? "Set as viewer" : "Set as editor"}
-            className={`rounded-lg p-2 transition-colors ${
-              isEditor
-                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-            }`}
+            className={controlButtonClass(
+              isEditor ? "dark" : "secondary",
+              false
+            )}
           >
             <FiEdit2 size={16} />
           </button>
@@ -243,13 +265,14 @@ function ParticipantCard({
                 ? "Turn mic off"
                 : "Turn mic on"
             }
-            className={`rounded-lg p-2 transition-colors ${
+            className={controlButtonClass(
               !canSelfControl
-                ? "bg-slate-100 text-slate-300 cursor-not-allowed"
+                ? "secondary"
                 : voiceState?.isMicEnabled
-                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-            }`}
+                ? "dark"
+                : "danger",
+              !canSelfControl
+            )}
           >
             {voiceState?.isMicEnabled ? (
               <FiMic size={16} />
@@ -271,15 +294,12 @@ function ParticipantCard({
                 ? "Undeafen"
                 : "Deafen"
             }
-            className={`rounded-lg p-2 transition-colors ${
-              !canSelfControl
-                ? "bg-slate-100 text-slate-300 cursor-not-allowed"
-                : voiceState?.isDeafened
-                ? "bg-slate-900 text-white hover:bg-slate-800"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-            }`}
+            className={controlButtonClass("secondary", !canSelfControl)}
           >
-            <FiHeadphones size={16} />
+            <FiHeadphones
+              className={voiceState?.isDeafened ? "opacity-40" : ""}
+              size={16}
+            />
           </button>
         )}
 
@@ -298,23 +318,23 @@ function ParticipantCard({
                     ? "Already muted"
                     : "Mute participant"
                 }
-                className={`rounded-lg p-2 transition-colors ${
+                className={controlButtonClass(
+                  "danger",
                   !canModerate || isMuted
-                    ? "bg-slate-100 text-slate-300 cursor-not-allowed"
-                    : "bg-rose-50 text-rose-600 hover:bg-rose-100"
-                }`}
+                )}
               >
                 <FiMicOff size={16} />
               </button>
             ) : (
               <div
-                className={`rounded-lg p-2 ${
+                className={controlButtonClass(
                   !inVoice
-                    ? "bg-slate-100 text-slate-300"
+                    ? "secondary"
                     : micKnown && micEnabled
-                    ? "bg-emerald-50 text-emerald-700"
-                    : "bg-slate-100 text-slate-500"
-                }`}
+                    ? "secondary"
+                    : "danger",
+                  true
+                )}
                 title={
                   !inVoice
                     ? "Not in voice"
@@ -348,30 +368,24 @@ function ParticipantCard({
                     ? "Undeafen"
                     : "Deafen"
                 }
-                className={`rounded-lg p-2 transition-colors ${
-                  !canModerate
-                    ? "bg-slate-100 text-slate-300 cursor-not-allowed"
-                    : deafened
-                    ? "bg-slate-900 text-white hover:bg-slate-800"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                }`}
+                className={controlButtonClass("secondary", !canModerate)}
               >
-                <FiHeadphones size={16} />
+                <FiHeadphones
+                  className={deafened ? "opacity-40" : ""}
+                  size={16}
+                />
               </button>
             ) : (
               <div
-                className={`rounded-lg p-2 ${
-                  !inVoice
-                    ? "bg-slate-100 text-slate-300"
-                    : deafened
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-100 text-slate-500"
-                }`}
+                className={controlButtonClass("secondary", true)}
                 title={
                   !inVoice ? "Not in voice" : deafened ? "Deafened" : "Hearing"
                 }
               >
-                <FiHeadphones size={16} />
+                <FiHeadphones
+                  className={deafened ? "opacity-40" : ""}
+                  size={16}
+                />
               </div>
             )}
           </>
@@ -386,7 +400,7 @@ function ParticipantCard({
               onKick?.(participant.id);
             }}
             title="Kick"
-            className="rounded-lg p-2 bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+            className={controlButtonClass("danger-ghost", false)}
           >
             <FiUserMinus size={16} />
           </button>

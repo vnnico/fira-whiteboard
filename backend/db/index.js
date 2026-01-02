@@ -1,3 +1,4 @@
+import { ChatMessage } from "../models/chatMessageModel.js";
 import { User } from "../models/userModel.js";
 
 const DEFAULT_USERS = [
@@ -26,6 +27,7 @@ const DEFAULT_USERS = [
 export async function initDb() {
   // Pastikan index dibuat
   await User.syncIndexes();
+  await ChatMessage.syncIndexes();
 
   const count = await User.countDocuments({});
   if (count === 0) {

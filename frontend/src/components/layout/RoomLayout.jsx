@@ -9,6 +9,7 @@ import { updateBoardTitle } from "../../services/whiteboardApi";
 import { useToast } from "../../hooks/useToast";
 import { useAuth } from "../../hooks/useAuth";
 import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
+import { useChat } from "../../hooks/useChat";
 
 export default function RoomLayout({
   children,
@@ -22,8 +23,16 @@ export default function RoomLayout({
   wbConnectionState = "disconnected",
   timerState,
 }) {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [sidebar, setSidebar] = useState({
+    isOpen: false,
+    tab: "participants",
+  });
+
+  const isSidebarOpen = sidebar.isOpen;
+  const activeSidebarTab = sidebar.tab;
+
   const voiceState = useVoiceState({ roomId });
+  const chatState = useChat(roomId);
   const { isAuthenticated, user } = useAuth();
   const location = useLocation();
 
@@ -80,6 +89,11 @@ export default function RoomLayout({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const inputRef = useRef(null);
+
+  const isChatVisible = isSidebarOpen && activeSidebarTab === "chat";
+  const [unreadCount, setUnreadCount] = useState(0);
+  const lastMsgCountRef = useRef(0);
+  const hasInitChatRef = useRef(false);
 
   const prevParticipantsRef = useRef(new Map());
 
@@ -223,7 +237,6 @@ export default function RoomLayout({
       try {
         await voiceState?.leaveVoice?.();
       } catch (_) {
-        // ignore
       } finally {
         navigate("/", { replace: true });
       }
@@ -232,6 +245,62 @@ export default function RoomLayout({
     window.addEventListener("wb-kicked", onKicked);
     return () => window.removeEventListener("wb-kicked", onKicked);
   }, [voiceState, navigate, showToast]);
+
+  useEffect(() => {
+    hasInitChatRef.current = false;
+    lastMsgCountRef.current = 0;
+    setUnreadCount(0);
+  }, [roomId]);
+
+  useEffect(() => {
+    if (!chatState?.isHistoryLoaded) {
+      hasInitChatRef.current = false;
+      lastMsgCountRef.current = 0;
+      setUnreadCount(0);
+    }
+  }, [chatState?.isHistoryLoaded]);
+
+  useEffect(() => {
+    if (!chatState?.isHistoryLoaded) return;
+
+    const nextCount = Array.isArray(chatState.messages)
+      ? chatState.messages.length
+      : 0;
+
+    if (!hasInitChatRef.current) {
+      hasInitChatRef.current = true;
+      lastMsgCountRef.current = nextCount;
+      return;
+    }
+
+    if (isChatVisible) {
+      setUnreadCount(0);
+      lastMsgCountRef.current = nextCount;
+      return;
+    }
+
+    const prevCount = lastMsgCountRef.current;
+    if (nextCount <= prevCount) {
+      lastMsgCountRef.current = nextCount;
+      return;
+    }
+
+    const newMsgs = (chatState.messages || []).slice(prevCount);
+    lastMsgCountRef.current = nextCount;
+
+    // hitung hanya message dari user lain
+    const myId = String(user?.id || "");
+    const inc = newMsgs.filter(
+      (m) => String(m?.sender?.id || "") !== myId
+    ).length;
+
+    if (inc > 0) setUnreadCount((c) => c + inc);
+  }, [
+    chatState?.isHistoryLoaded,
+    chatState?.messages,
+    isChatVisible,
+    user?.id,
+  ]);
 
   const participantsRef = useRef([]);
   useEffect(() => {
@@ -270,6 +339,19 @@ export default function RoomLayout({
     }
   };
 
+  const openSidebar = (tab) => {
+    setSidebar({ isOpen: true, tab });
+  };
+
+  const closeSidebar = () => {
+    // reset tab saat close biar tidak “nyangkut”
+    setSidebar({ isOpen: false, tab: "participants" });
+  };
+
+  const setSidebarTab = (tab) => {
+    setSidebar((s) => ({ ...s, tab }));
+  };
+
   const handleShare = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -279,6 +361,26 @@ export default function RoomLayout({
     }
   };
 
+  const handleToggleChat = () => {
+    if (!isSidebarOpen) {
+      openSidebar("chat");
+      setUnreadCount(0);
+      return;
+    }
+
+    if (activeSidebarTab !== "chat") {
+      setSidebarTab("chat");
+      setUnreadCount(0);
+      return;
+    }
+
+    closeSidebar();
+  };
+
+  const handleTabChange = (tab) => {
+    setSidebarTab(tab);
+    if (tab === "chat") setUnreadCount(0);
+  };
   // Avatar panel
   const topAvatars = (participantsForUI || []).slice(0, 5);
 
@@ -344,7 +446,7 @@ export default function RoomLayout({
           {/* Avatar panel */}
           <div
             className="flex -space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={() => openSidebar("participants")}
           >
             {topAvatars.length === 0 ? (
               <div className="h-8 w-8 rounded-full bg-slate-200 ring-2 ring-white" />
@@ -389,7 +491,7 @@ export default function RoomLayout({
             <span className="hidden md:inline">Share</span>
           </button>
           <button
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={() => openSidebar("participants")}
             className="flex h-9 w-9 items-center justify-center rounded-lg bg-white shadow ring-1 ring-slate-900/5 hover:bg-slate-50 transition-colors"
           >
             <FiMenu className="text-slate-600" />
@@ -428,14 +530,20 @@ export default function RoomLayout({
       <CommDock
         voiceState={voiceState}
         canJoinVoice={canJoinVoice}
-        onToggleChat={() => setIsSidebarOpen((prev) => !prev)}
+        onToggleChat={handleToggleChat}
+        unreadCount={unreadCount}
       />
       <ManagementSidebar
         isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
+        onClose={closeSidebar}
+        activeTab={activeSidebarTab}
         participants={participantsForUI}
         voiceState={voiceState}
         myRole={myRole}
+        chatState={chatState}
+        roomId={roomId}
+        myUserId={String(user?.id || "")}
+        onTabChange={handleTabChange}
         onSetRole={(targetUserId, role) => setUserRoleFn?.(targetUserId, role)}
         onKick={(targetUserId) => kickUserFn?.(targetUserId)}
         onMuteParticipant={(targetUserId) =>
