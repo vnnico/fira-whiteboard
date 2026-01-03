@@ -1,13 +1,23 @@
 import AvatarBadge from "../ui/AvatarBadge";
 import { getAvatarColor } from "../../utils/avatarUtils";
+import { useMemo } from "react";
 
-export default function CursorOverlay({ cursors }) {
+export default function CursorOverlay({ cursors, roomMembers }) {
+  const nameById = useMemo(() => {
+    const m = new Map();
+    (roomMembers || []).forEach((u) => {
+      if (u?.id) m.set(String(u.id), u.username || "Unknown");
+    });
+    return m;
+  }, [roomMembers]);
+
   if (!cursors || cursors.length === 0) return null;
 
   return (
     <>
       {cursors.map((c) => {
-        var color = getAvatarColor(c.userId);
+        const color = getAvatarColor(c.userId);
+        const username = nameById.get(String(c.userId)) || "Unknown";
 
         return (
           <div
@@ -41,7 +51,7 @@ export default function CursorOverlay({ cursors }) {
               >
                 <AvatarBadge
                   userId={c.userId}
-                  username={c.username}
+                  username={username}
                   size={22}
                   showName={true}
                   nameMaxWidth={120}

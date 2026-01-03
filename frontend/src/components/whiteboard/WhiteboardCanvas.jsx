@@ -42,6 +42,7 @@ import LoadingModal from "../ui/LoadingModal";
 const CANVAS_SIZE = 8000;
 const CLIPBOARD_OFFSET = 20;
 const LOCK_IDLE_TIMEOUT_MS = 5 * 1000;
+const MIN_PENCIL_POINT_DIST = 15;
 
 const STROKE_COLORS = [
   "#111827", // slate-900
@@ -1232,7 +1233,6 @@ export default function WhiteboardCanvas({
         const selectedEl = elements.find((el) => el?.id === selectedId);
 
         if (selectedEl) {
-          console.log(selectedEl);
           const hitPos = getSelectionHitPosition(selectedEl, x, y);
 
           if (hitPos !== CursorPosition.OUTSIDE) {
@@ -1396,6 +1396,24 @@ export default function WhiteboardCanvas({
       markLockActivity();
 
       setElements((prev) => {
+        const current = prev.find((el) => el?.id === drawId);
+        if (!current) return prev;
+
+        // Pencil sampling :skip update kalau jarak terlalu kecil
+        if (current.type === ToolTypes.PENCIL) {
+          const pts = current.points || [];
+          const last = pts[pts.length - 1];
+          if (last) {
+            const dx = x - last.x;
+            const dy = y - last.y;
+            if (
+              dx * dx + dy * dy <
+              MIN_PENCIL_POINT_DIST * MIN_PENCIL_POINT_DIST
+            ) {
+              return prev; // tidak update state, tidak kirim draft
+            }
+          }
+        }
         const { elements: updated, element: updatedElement } = updateElement(
           prev,
           drawId,
@@ -2043,7 +2061,7 @@ export default function WhiteboardCanvas({
             )}
 
             <div style={{ pointerEvents: "none" }}>
-              <CursorOverlay cursors={cursors} />
+              <CursorOverlay cursors={cursors} roomMembers={roomMembers} />
             </div>
           </div>
         </TransformComponent>

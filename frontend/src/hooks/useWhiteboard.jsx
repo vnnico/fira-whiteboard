@@ -5,6 +5,9 @@ import { createWhiteboardSocket } from "../services/socketClient";
 import { useAuth } from "./useAuth";
 import { useToast } from "./useToast";
 
+const CURSOR_THROTTLE_MS = 50; // 20 FPS or 20 udpates/sec
+const CURSOR_MIN_DIST_PX = 10; // gerak <10px tidak perlu dikirim
+
 export function useWhiteboard(roomId) {
   const { token, user } = useAuth();
   const [socket, setSocket] = useState(null);
@@ -135,7 +138,7 @@ export function useWhiteboard(roomId) {
     });
 
     // cursor
-    s.on("cursor-position", ({ userId, x, y, username }) => {
+    s.on("cursor-position", ({ userId, x, y }) => {
       if (!userId) return;
 
       setCursors((prev) => {
@@ -144,7 +147,6 @@ export function useWhiteboard(roomId) {
 
         const item = {
           userId,
-          username: username || "Unknown",
           x,
           y,
         };
@@ -252,7 +254,9 @@ export function useWhiteboard(roomId) {
     };
   }, [roomId, token]);
 
-  // ------ emit helpers (draft + final + lock + cursor) ------
+  const rawEmitCursor = useRef(null);
+  const emitCursorThrottled = useRef(null);
+  const lastCursorSentRef = useRef({ x: null, y: null });
 
   const rawEmitElementUpdate = useRef(null);
   const emitDraftElementUpdate = useRef(null);
@@ -275,6 +279,28 @@ export function useWhiteboard(roomId) {
       emitDraftElementUpdate.current && emitDraftElementUpdate.current.cancel();
     };
   }, [socket, roomId]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    rawEmitCursor.current = (payload) => {
+      socket.emit("cursor-position", payload);
+    };
+
+    emitCursorThrottled.current = throttle(
+      (payload) => rawEmitCursor.current && rawEmitCursor.current(payload),
+      CURSOR_THROTTLE_MS,
+      { leading: true, trailing: true }
+    );
+
+    return () => {
+      if (emitCursorThrottled.current?.cancel)
+        emitCursorThrottled.current.cancel();
+      rawEmitCursor.current = null;
+      emitCursorThrottled.current = null;
+      lastCursorSentRef.current = { x: null, y: null };
+    };
+  }, [socket]);
 
   const api = useMemo(() => {
     return {
@@ -328,10 +354,23 @@ export function useWhiteboard(roomId) {
         if (isFinal) setElements([]);
       },
 
-      // cursor
+      // send with throttled and distance threshold
       sendCursor: (x, y) => {
         if (!socket) return;
-        socket.emit("cursor-position", { roomId, x, y });
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        if (!emitCursorThrottled.current) return;
+
+        const last = lastCursorSentRef.current;
+        if (last.x !== null && last.y !== null) {
+          const dx = x - last.x;
+          const dy = y - last.y;
+          if (dx * dx + dy * dy < CURSOR_MIN_DIST_PX * CURSOR_MIN_DIST_PX) {
+            return;
+          }
+        }
+
+        lastCursorSentRef.current = { x, y };
+        emitCursorThrottled.current({ roomId, x, y });
       },
 
       // locking

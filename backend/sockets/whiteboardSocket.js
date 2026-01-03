@@ -450,7 +450,6 @@ export function registerWhiteboardHandlers(io, socket) {
         x,
         y,
         userId: String(socket.user?.id ?? socket.data?.userId ?? socket.id),
-        username: socket.user?.username || "Unknown",
       });
     } catch (err) {
       console.error("[whiteboard] cursor-position error:", err?.message || err);

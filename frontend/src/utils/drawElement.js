@@ -6,6 +6,22 @@ import { getSvgPathFromStroke } from "./getSvgPathFromStroke";
 const FONT_SIZE = 24;
 const LINE_HEIGHT = 30; // Sedikit lebih besar dari font size (1.25x)
 
+// Cache rough canvas untuk hindari create ulang tiap redraw
+const roughCanvasCache = new WeakMap();
+
+function getRoughCanvas(ctx) {
+  const canvas = ctx?.canvas;
+  if (!canvas) return rough.canvas(ctx.canvas);
+
+  let rc = roughCanvasCache.get(canvas);
+  if (!rc) {
+    rc = rough.canvas(canvas);
+    roughCanvasCache.set(canvas, rc);
+    console.log("[WB] roughCanvas created for canvas");
+  }
+  return rc;
+}
+
 function getBounds(el) {
   if (el.type === ToolTypes.PENCIL && el.points?.length) {
     const xs = el.points.map((p) => p.x);
@@ -155,7 +171,7 @@ export function drawElement(ctx, roughCanvas, element, opts = {}) {
 
 export function drawElements(ctx, elements, locks = {}, myUserId) {
   if (!ctx || !elements) return;
-  const roughCanvas = rough.canvas(ctx.canvas);
+  const roughCanvas = getRoughCanvas(ctx);
 
   elements.forEach((el) => {
     if (!el) return;
