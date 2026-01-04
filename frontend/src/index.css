@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-fira-primary: #ef4444;
+  --color-fira-dark: #111827;
+  --color-fira-light: #f9fafb;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+button {
+  cursor: pointer;
+}
