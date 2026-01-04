@@ -98,6 +98,8 @@ export default function RoomLayout({
   const prevParticipantsRef = useRef(new Map());
 
   const myRole = participantsForUI.find((p) => p.isMe)?.role || "VIEWER";
+  const canRenameTitle = myRole === "OWNER";
+
   const prevMyRoleRef = useRef(myRole);
   const hasInitMyRoleRef = useRef(false);
 
@@ -310,6 +312,11 @@ export default function RoomLayout({
   const handleTitleSubmit = async (e) => {
     e?.preventDefault();
     const nextTitle = localTitle.trim() || "Untitled";
+    if (!canRenameTitle) {
+      setLocalTitle(title);
+      setIsEditing(false);
+      return;
+    }
 
     if (nextTitle === title) {
       setIsEditing(false);
@@ -419,7 +426,7 @@ export default function RoomLayout({
             focus:ring-2 focus:ring-emerald-200"
                 />
               </form>
-            ) : (
+            ) : canRenameTitle ? (
               <button
                 onClick={() => roomId && setIsEditing(true)}
                 className="max-w-[150px] truncate text-left text-sm font-semibold text-slate-700 hover:text-emerald-600 hover:underline md:max-w-xs"
@@ -427,6 +434,13 @@ export default function RoomLayout({
               >
                 {localTitle}
               </button>
+            ) : (
+              <div
+                className="max-w-[150px] truncate text-left text-sm font-semibold text-slate-700 md:max-w-xs"
+                title={localTitle}
+              >
+                {localTitle}
+              </div>
             )}
             <div className="my-2 w-px bg-slate-200" />
 

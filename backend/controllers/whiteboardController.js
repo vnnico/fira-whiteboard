@@ -5,8 +5,16 @@ import { getWhiteboardNamespace } from "../sockets/index.js";
 // GET /api/whiteboards/:roomId/exists  (NO auth)
 export async function checkWhiteboardExists(req, res, next) {
   try {
-    const rid = String(req.params.roomId || "");
+    const rid = String(req.params.roomId || "").trim();
     if (!rid) return res.status(400).json({ message: "Missing roomId" });
+
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        rid
+      );
+    if (!isUuid) {
+      return res.status(200).json({ exists: false });
+    }
 
     const exists = await Board.exists({ roomId: rid });
     if (!exists) return res.status(404).json({ exists: false });
@@ -78,7 +86,6 @@ export async function createWhiteboard(req, res, next) {
       roles: { [userId]: Roles.OWNER },
       locked: false,
       elements: [],
-      schemaVersion: 1,
     });
 
     return res.status(201).json({
@@ -104,8 +111,26 @@ export async function updateTitle(req, res, next) {
     const rid = String(req.params.roomId || "");
     if (!rid) return res.status(400).json({ message: "Missing roomId" });
 
+    const userId = String(req.user?.id || "");
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    const existing = await Board.findOne({ roomId: rid })
+      .select("roomId createdBy roles")
+      .lean();
+
+    if (!existing) return res.status(404).json({ message: "Board not found" });
+
+    const isOwner =
+      (existing.createdBy && String(existing.createdBy) === userId) ||
+      String(existing.roles?.[userId] || "") === Roles.OWNER;
+
+    if (!isOwner) return res.status(403).json({ message: "Forbidden" });
+
     const nextTitle =
       String(req.body?.title || "").trim() || "Untitled Whiteboard";
+
+    if (nextTitle.length > 50)
+      return res.status(400).json({ message: "Title is too long (max 50)" });
 
     const board = await Board.findOneAndUpdate(
       { roomId: rid },
@@ -114,8 +139,6 @@ export async function updateTitle(req, res, next) {
     )
       .select("roomId title createdBy members locked createdAt updatedAt")
       .lean();
-
-    if (!board) return res.status(404).json({ message: "Board not found" });
 
     // broadcast realtime title update to room
     const ns = getWhiteboardNamespace();

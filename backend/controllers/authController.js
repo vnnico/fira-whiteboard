@@ -1,10 +1,7 @@
 import jwt from "jsonwebtoken";
 import { JWT_SECRET } from "../config/env.js";
-import {
-  findByUsername,
-  findById,
-  generateRandomDisplayName,
-} from "../models/userModel.js";
+import bcrypt from "bcryptjs";
+import { findAuthByUsername, findById } from "../models/userModel.js";
 
 function signToken(user) {
   return jwt.sign({ sub: user.id, username: user.username }, JWT_SECRET, {
@@ -15,13 +12,20 @@ function signToken(user) {
 export async function login(req, res, next) {
   try {
     const { username, password } = req.body;
-    const user = await findByUsername(username);
-    if (!user || user.password !== password) {
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ message: "username and password are required" });
+    }
+
+    const user = await findAuthByUsername(username);
+    if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
-    if (!user.displayName?.startsWith("User-")) {
-      user.displayName = generateRandomDisplayName();
-    }
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(401).json({ message: "Invalid credentials" });
 
     const token = signToken(user);
 
@@ -30,7 +34,6 @@ export async function login(req, res, next) {
       user: {
         id: user.id,
         username: user.username,
-        displayName: user.displayName,
       },
     });
   } catch (err) {
@@ -48,7 +51,6 @@ export async function getMe(req, res, next) {
     return res.status(200).json({
       id: user.id,
       username: user.username,
-      displayName: user.displayName,
     });
   } catch (err) {
     next(err);

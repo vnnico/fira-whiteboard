@@ -100,3 +100,21 @@ export function getVoiceSnapshot(roomId) {
   }
   return out;
 }
+
+export function getVoiceRuntime(roomId, userId) {
+  const rid = String(roomId || "");
+  const uid = String(userId || "");
+  if (!rid || !uid) return null;
+
+  const room = voiceStateByRoom.get(rid);
+  if (!room) return null;
+
+  const entry = room.get(uid);
+  if (!entry) return null;
+
+  return {
+    state: publicState(entry),
+    socketsCount: entry.sockets?.size || 0,
+    updatedAt: entry.updatedAt || Date.now(),
+  };
+}

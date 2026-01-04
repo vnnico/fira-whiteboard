@@ -1,4 +1,5 @@
 import { Board, Roles } from "../models/whiteboardModel.js";
+import { isBoardMember } from "../utils/boardMembership.js";
 
 const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.EDITOR;
 const MIN_TIMER_MS = 5 * 60 * 1000;
@@ -289,7 +290,8 @@ function kickUserFromRoom(io, roomId, targetUserId, byUser) {
 }
 
 export function registerWhiteboardHandlers(io, socket) {
-  const getRoomId = (roomId) => String(roomId ?? socket.data?.roomId ?? "");
+  const getRoomId = () => String(socket.data?.roomId || "");
+  const getUserId = () => String(socket.data?.userId || "");
 
   const emitPermissionDenied = (action, message = "No permission") => {
     const now = Date.now();
@@ -375,17 +377,17 @@ export function registerWhiteboardHandlers(io, socket) {
   });
 
   socket.on("element-update", async (data) => {
-    const { roomId, element, isFinal } = data || {};
-    const rid = getRoomId(roomId);
+    const { element, isFinal } = data || {};
+    const rid = getRoomId();
 
+    if (!rid || !element) return;
     try {
-      if (!rid || !element) return;
       if (!socket.data?.canEdit) {
         emitPermissionDenied("element-update", "View-only mode");
         return;
       }
 
-      const requesterId = String(socket.user?.id ?? "");
+      const requesterId = getUserId();
       const roomLocks = locksByRoom.get(rid);
       const lockOwner = roomLocks?.get(String(element.id));
       if (lockOwner && String(lockOwner) !== requesterId) {
@@ -412,11 +414,10 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("whiteboard-clear", async ({ roomId, isFinal }) => {
-    const rid = getRoomId(roomId);
+  socket.on("whiteboard-clear", async ({ isFinal }) => {
+    const rid = getRoomId();
+    if (!rid) return;
     try {
-      if (!rid) return;
-
       if (!socket.data?.canEdit) {
         emitPermissionDenied("whiteboard-clear", "View-only mode");
         return;
@@ -441,15 +442,16 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("cursor-position", ({ roomId, x, y }) => {
-    const rid = getRoomId(roomId);
+  socket.on("cursor-position", ({ x, y }) => {
+    const rid = getRoomId();
+    const uid = getUserId();
+    if (!rid || !uid || typeof x !== "number" || typeof y !== "number") return;
 
     try {
-      if (!rid || typeof x !== "number" || typeof y !== "number") return;
       socket.to(rid).emit("cursor-position", {
         x,
         y,
-        userId: String(socket.user?.id ?? socket.data?.userId ?? socket.id),
+        userId: uid,
       });
     } catch (err) {
       console.error("[whiteboard] cursor-position error:", err?.message || err);
@@ -463,16 +465,18 @@ export function registerWhiteboardHandlers(io, socket) {
   });
 
   socket.on("element-lock", (payload, ack) => {
-    const { roomId, elementId, locked } = payload || {};
-    const rid = getRoomId(roomId);
+    const { elementId, locked } = payload || {};
+    const rid = getRoomId();
+    const uid = getUserId();
+
     try {
-      if (!rid || !elementId) {
+      if (!rid || !elementId || !uid) {
         if (typeof ack === "function")
           ack({ ok: false, reason: "bad-request" });
         return;
       }
 
-      const perms = getPermissionsForUser(rid, socket.user?.id);
+      const perms = getPermissionsForUser(rid, uid);
       if (!perms.canEdit) {
         emitPermissionDenied("element-lock", "View-only mode");
         if (typeof ack === "function")
@@ -480,7 +484,7 @@ export function registerWhiteboardHandlers(io, socket) {
         return;
       }
 
-      const requesterId = String(socket.user?.id ?? "");
+      const requesterId = uid;
       const roomLocks = getRoomLocks(rid);
       const currentOwner = roomLocks.get(String(elementId));
 
@@ -544,21 +548,20 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("moderation:kick", ({ roomId, targetUserId }) => {
-    const rid = getRoomId(roomId);
-    try {
-      if (!rid || !targetUserId) return;
+  socket.on("moderation:kick", ({ targetUserId }) => {
+    const rid = getRoomId();
+    const uid = getUserId();
 
-      const perms = getPermissionsForUser(rid, socket.user?.id);
+    if (!rid || !uid || !targetUserId) return;
+    try {
+      const perms = getPermissionsForUser(rid, uid);
       if (perms.role !== Roles.OWNER) {
         emitPermissionDenied("moderation:kick", "Only owner can kick");
         return;
       }
 
       const tid = String(targetUserId);
-      const selfId = String(socket.user?.id);
-
-      if (tid === selfId) {
+      if (tid === uid) {
         emitPermissionDenied("moderation:kick", "You cannot kick yourself");
         return;
       }
@@ -577,11 +580,12 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("moderation:set-role", async ({ roomId, targetUserId, role }) => {
-    const rid = getRoomId(roomId);
-    try {
-      if (!rid || !targetUserId || !role) return;
+  socket.on("moderation:set-role", async ({ targetUserId, role }) => {
+    const rid = getRoomId();
+    const uid = getUserId();
+    if (!rid || !uid || !targetUserId || !role) return;
 
+    try {
       if (String(socket.data?.role || Roles.VIEWER) !== Roles.OWNER) {
         emitPermissionDenied(
           "moderation:set-role",
@@ -591,7 +595,7 @@ export function registerWhiteboardHandlers(io, socket) {
       }
 
       const tid = String(targetUserId);
-      if (tid === String(socket.user?.id)) {
+      if (tid === uid) {
         emitPermissionDenied(
           "moderation:set-role",
           "Cannot change your own role"
@@ -601,6 +605,17 @@ export function registerWhiteboardHandlers(io, socket) {
 
       if (role !== Roles.EDITOR && role !== Roles.VIEWER) {
         emitPermissionDenied("moderation:set-role", "Invalid role");
+        return;
+      }
+
+      const board = await Board.findOne({ roomId: rid })
+        .select("roomId createdBy members roles")
+        .lean();
+      if (!isBoardMember(board, tid)) {
+        emitPermissionDenied(
+          "moderation:set-role",
+          "Target must already be a member"
+        );
         return;
       }
 
@@ -638,18 +653,19 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("timer:start", ({ roomId, durationMs }) => {
-    const rid = getRoomId(roomId);
-    try {
-      if (!rid) return;
+  socket.on("timer:start", ({ durationMs }) => {
+    const rid = getRoomId();
+    const uid = getUserId();
+    if (!rid || !uid) return;
 
+    try {
       const ms = Number(durationMs);
       if (!Number.isFinite(ms) || ms < MIN_TIMER_MS || ms > MAX_TIMER_MS) {
         emitPermissionDenied("timer:start", "Invalid duration");
         return;
       }
 
-      const perms = getPermissionsForUser(rid, socket.user?.id);
+      const perms = getPermissionsForUser(rid, uid);
       if (!perms || perms.role !== Roles.OWNER) {
         emitPermissionDenied("timer:start", "Only owner can start timer");
         return;
@@ -665,14 +681,14 @@ export function registerWhiteboardHandlers(io, socket) {
         running: true,
         endAt,
         durationMs: ms,
-        startedBy: String(socket.user?.id ?? ""),
+        startedBy: uid,
       });
 
       broadcastTimerState(io, rid);
       io.to(rid).emit("timer:action", {
         roomId: rid,
         action: "start",
-        actorUserId: String(socket.user?.id ?? ""),
+        actorUserId: uid,
         durationMs: ms,
       });
 
@@ -689,12 +705,13 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("timer:stop", ({ roomId }) => {
-    const rid = getRoomId(roomId);
-    try {
-      if (!rid) return;
+  socket.on("timer:stop", () => {
+    const rid = getRoomId();
+    const uid = getUserId();
+    if (!rid || !uid) return;
 
-      const perms = getPermissionsForUser(rid, socket.user?.id);
+    try {
+      const perms = getPermissionsForUser(rid, uid);
       if (!perms || perms.role !== Roles.OWNER) {
         emitPermissionDenied("timer:stop", "Only owner can stop timer");
         return;
@@ -704,7 +721,7 @@ export function registerWhiteboardHandlers(io, socket) {
       io.to(rid).emit("timer:action", {
         roomId: rid,
         action: "stop",
-        actorUserId: String(socket.user?.id ?? ""),
+        actorUserId: uid,
       });
     } catch (err) {
       console.error("[whiteboard] time:stop error:", err?.message || err);
@@ -717,12 +734,13 @@ export function registerWhiteboardHandlers(io, socket) {
     }
   });
 
-  socket.on("timer:reset", ({ roomId }) => {
-    const rid = getRoomId(roomId);
-    try {
-      if (!rid) return;
+  socket.on("timer:reset", () => {
+    const rid = getRoomId();
+    const uid = getUserId();
+    if (!rid || !uid) return;
 
-      const perms = getPermissionsForUser(rid, socket.user?.id);
+    try {
+      const perms = getPermissionsForUser(rid, uid);
       if (!perms || perms.role !== Roles.OWNER) {
         emitPermissionDenied("timer:reset", "Only owner can reset timer");
         return;
@@ -732,7 +750,7 @@ export function registerWhiteboardHandlers(io, socket) {
       io.to(rid).emit("timer:action", {
         roomId: rid,
         action: "reset",
-        actorUserId: String(socket.user?.id ?? ""),
+        actorUserId: uid,
       });
     } catch (err) {
       console.error("[whiteboard] timer:reset error:", err?.message || err);

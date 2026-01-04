@@ -27,7 +27,7 @@ export function useWhiteboard(roomId) {
 
   // Data state in mid whiteboard
   const [title, setTitle] = useState("Untitled");
-  const myUserId = user?.id || "anon";
+  const myUserId = String(user?.id || "");
 
   const { showToast } = useToast();
 
@@ -278,7 +278,7 @@ export function useWhiteboard(roomId) {
     return () => {
       emitDraftElementUpdate.current && emitDraftElementUpdate.current.cancel();
     };
-  }, [socket, roomId]);
+  }, [socket]);
 
   useEffect(() => {
     if (!socket) return;
@@ -324,7 +324,6 @@ export function useWhiteboard(roomId) {
 
         if (!socket || !emitDraftElementUpdate.current) return;
         emitDraftElementUpdate.current({
-          roomId,
           element,
           isFinal: false,
         });
@@ -339,7 +338,6 @@ export function useWhiteboard(roomId) {
           emitDraftElementUpdate.current.cancel(); // pastikan tidak ada draft mengekor
         }
         rawEmitElementUpdate.current({
-          roomId,
           element,
           isFinal: true,
         });
@@ -350,7 +348,7 @@ export function useWhiteboard(roomId) {
         if (!canEdit) return;
 
         if (!socket) return;
-        socket.emit("whiteboard-clear", { roomId, isFinal });
+        socket.emit("whiteboard-clear", { isFinal });
         if (isFinal) setElements([]);
       },
 
@@ -370,7 +368,7 @@ export function useWhiteboard(roomId) {
         }
 
         lastCursorSentRef.current = { x, y };
-        emitCursorThrottled.current({ roomId, x, y });
+        emitCursorThrottled.current({ x, y });
       },
 
       // locking
@@ -379,9 +377,7 @@ export function useWhiteboard(roomId) {
 
         if (!socket) return;
         socket.emit("element-lock", {
-          roomId,
           elementId,
-          userId: myUserId,
           locked: true,
         });
       },
@@ -389,35 +385,31 @@ export function useWhiteboard(roomId) {
         if (!canEdit) return;
 
         if (!socket) return;
-        socket.emit(
-          "element-lock",
-          { roomId, elementId, locked: false },
-          (ack) => {
-            if (ack && !ack.ok) {
-            }
+        socket.emit("element-lock", { elementId, locked: false }, (ack) => {
+          if (ack && !ack.ok) {
           }
-        );
+        });
       },
       kickUser: (targetUserId) => {
         if (!socket) return;
-        socket.emit("moderation:kick", { roomId, targetUserId });
+        socket.emit("moderation:kick", { targetUserId });
       },
       setUserRole: (targetUserId, role) => {
         if (!socket) return;
-        socket.emit("moderation:set-role", { roomId, targetUserId, role });
+        socket.emit("moderation:set-role", { targetUserId, role });
       },
 
       startTimer: (durationMs) => {
         if (!socket) return;
-        socket.emit("timer:start", { roomId, durationMs });
+        socket.emit("timer:start", { durationMs });
       },
       stopTimer: () => {
         if (!socket) return;
-        socket.emit("timer:stop", { roomId });
+        socket.emit("timer:stop", {});
       },
       resetTimer: () => {
         if (!socket) return;
-        socket.emit("timer:reset", { roomId });
+        socket.emit("timer:reset", {});
       },
     };
   }, [

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createChatSocket } from "../services/socketClient";
 import { useAuth } from "./useAuth";
 
-function makeClientMessageId() {
+function makeLocalTempId() {
   const rnd = Math.floor(Math.random() * 1e9);
-  return `${Date.now()}-${rnd}`;
+  return `tmp-${Date.now()}-${rnd}`;
 }
 
 function mapServerMessage(raw) {
@@ -25,41 +25,41 @@ function mapServerMessage(raw) {
       id: String(senderId || ""),
       username: String(senderUsername),
     },
-    clientMessageId: raw.clientMessageId ? String(raw.clientMessageId) : null,
     createdAt: raw.createdAt || null,
     status: "sent",
   };
 }
 
-function reconcileSelfMessage(prev, msg, myUserId) {
-  if (!msg) return null;
+function replaceOptimisticById(prev, localId, serverMsg, myUserId) {
+  if (!serverMsg) return null;
 
-  const isMe = String(msg?.sender?.id || "") === String(myUserId || "");
+  const idx = prev.findIndex((m) => String(m.id) === String(localId));
+  if (idx < 0) return null;
+
+  const mine = String(prev[idx]?.sender?.id || "") === String(myUserId || "");
+  if (!mine) return null;
+  if (prev[idx]?.status !== "sending") return null;
+
+  const clone = [...prev];
+  clone[idx] = { ...serverMsg, status: "sent" };
+  return clone;
+}
+
+function reconcileLastSendingSameText(prev, serverMsg, myUserId) {
+  if (!serverMsg) return null;
+
+  const isMe = String(serverMsg?.sender?.id || "") === String(myUserId || "");
   if (!isMe) return null;
 
-  // match by clientMessageId
-  if (msg.clientMessageId) {
-    const idx = prev.findIndex(
-      (m) => m.clientMessageId && m.clientMessageId === msg.clientMessageId
-    );
-    if (idx >= 0) {
-      const clone = [...prev];
-      clone[idx] = { ...clone[idx], ...msg, status: "sent" };
-      return clone;
-    }
-  }
-
-  // Fallback: last "sending" from me with same text (handles missing clientMessageId)
   for (let i = prev.length - 1; i >= 0; i--) {
     const m = prev[i];
     const mine = String(m?.sender?.id || "") === String(myUserId || "");
-    if (mine && m.status === "sending" && m.text === msg.text) {
+    if (mine && m.status === "sending" && m.text === serverMsg.text) {
       const clone = [...prev];
-      clone[i] = { ...m, ...msg, status: "sent" };
+      clone[i] = { ...serverMsg, status: "sent" };
       return clone;
     }
   }
-
   return null;
 }
 
@@ -75,21 +75,6 @@ function upsertMessage(prev, nextMsg) {
       status: nextMsg.status || "sent",
     };
     return clone;
-  }
-
-  if (nextMsg.clientMessageId) {
-    const byClientId = prev.findIndex(
-      (m) => m.clientMessageId && m.clientMessageId === nextMsg.clientMessageId
-    );
-    if (byClientId >= 0) {
-      const clone = [...prev];
-      clone[byClientId] = {
-        ...clone[byClientId],
-        ...nextMsg,
-        status: nextMsg.status || "sent",
-      };
-      return clone;
-    }
   }
 
   return [...prev, nextMsg];
@@ -146,7 +131,7 @@ export function useChat(roomId) {
       const msg = mapServerMessage(raw);
       if (!msg) return;
       setMessages((prev) => {
-        const fixed = reconcileSelfMessage(prev, msg, myUserId);
+        const fixed = reconcileLastSendingSameText(prev, msg, myUserId);
         if (fixed) return fixed;
         return upsertMessage(prev, msg);
       });
@@ -182,7 +167,8 @@ export function useChat(roomId) {
       clearInterval(pruneInterval);
 
       try {
-        s.emit("chat:typing", { roomId: String(roomId), typing: false });
+        // BE: tidak perlu roomId
+        s.emit("chat:typing", { typing: false });
       } catch {}
 
       s.disconnect();
@@ -202,29 +188,25 @@ export function useChat(roomId) {
       const next = !!isTyping;
 
       if (next === typingActiveRef.current) {
-        // refresh timer if still typing
         if (next) {
           if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
           typingTimerRef.current = setTimeout(() => {
             typingActiveRef.current = false;
-            socket.emit("chat:typing", {
-              roomId: String(roomId),
-              typing: false,
-            });
+            socket.emit("chat:typing", { typing: false });
           }, 1400);
         }
         return;
       }
 
       typingActiveRef.current = next;
-      socket.emit("chat:typing", { roomId: String(roomId), typing: next });
+      socket.emit("chat:typing", { typing: next });
 
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
 
       if (next) {
         typingTimerRef.current = setTimeout(() => {
           typingActiveRef.current = false;
-          socket.emit("chat:typing", { roomId: String(roomId), typing: false });
+          socket.emit("chat:typing", { typing: false });
         }, 1400);
       }
     },
@@ -240,14 +222,13 @@ export function useChat(roomId) {
         return { ok: false, code: "offline" };
       }
 
-      const clientMessageId = makeClientMessageId();
+      const localId = makeLocalTempId();
 
       const optimistic = {
-        id: clientMessageId, // temporary
+        id: localId,
         roomId: String(roomId || ""),
         text: clean,
         sender: { id: myUserId, username: String(user?.username || "Me") },
-        clientMessageId,
         createdAt: new Date().toISOString(),
         status: "sending",
       };
@@ -256,63 +237,68 @@ export function useChat(roomId) {
       setTyping(false);
 
       return new Promise((resolve) => {
-        socket.emit(
-          "chat:send",
-          { roomId: String(roomId), text: clean, clientMessageId },
-          (res) => {
-            if (!res?.ok) {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.clientMessageId === clientMessageId
-                    ? { ...m, status: "error" }
-                    : m
-                )
+        // BE: rid diambil dari socket.data, payload cukup text
+        socket.emit("chat:send", { text: clean }, (res) => {
+          if (!res?.ok) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                String(m.id) === String(localId) ? { ...m, status: "error" } : m
+              )
+            );
+            resolve({ ok: false, code: res?.code || "send-failed" });
+            return;
+          }
+
+          const serverMsg = mapServerMessage(res.message);
+
+          setMessages((prev) => {
+            if (!serverMsg) {
+              return prev.map((m) =>
+                String(m.id) === String(localId) ? { ...m, status: "sent" } : m
               );
-              resolve({ ok: false, code: res?.code || "send-failed" });
-              return;
             }
 
-            const serverMsg = mapServerMessage(res.message);
+            const fixedById = replaceOptimisticById(
+              prev,
+              localId,
+              serverMsg,
+              myUserId
+            );
+            if (fixedById) return fixedById;
 
-            setMessages((prev) => {
-              if (!serverMsg) {
-                //mark as sent if server does not send message object
-                return prev.map((m) =>
-                  m.clientMessageId === clientMessageId
-                    ? { ...m, status: "sent" }
-                    : m
-                );
-              }
+            const fixedByText = reconcileLastSendingSameText(
+              prev,
+              serverMsg,
+              myUserId
+            );
+            if (fixedByText) return fixedByText;
 
-              const fixed = reconcileSelfMessage(prev, serverMsg, myUserId);
-              if (fixed) return fixed;
+            return upsertMessage(prev, serverMsg);
+          });
 
-              return upsertMessage(prev, serverMsg);
-            });
-
-            resolve({ ok: true });
-          }
-        );
+          resolve({ ok: true });
+        });
       });
     },
     [socket, connectionState, roomId, myUserId, user?.username, setTyping]
   );
 
-  return useMemo(() => {
-    return {
+  return useMemo(
+    () => ({
       connectionState,
       messages,
       isHistoryLoaded,
       typingUsers,
       sendMessage,
       setTyping,
-    };
-  }, [
-    connectionState,
-    messages,
-    isHistoryLoaded,
-    typingUsers,
-    sendMessage,
-    setTyping,
-  ]);
+    }),
+    [
+      connectionState,
+      messages,
+      isHistoryLoaded,
+      typingUsers,
+      sendMessage,
+      setTyping,
+    ]
+  );
 }

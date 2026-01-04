@@ -1,9 +1,9 @@
-import { Router } from "express";
-import { updateMyDisplayName } from "../controllers/userController.js";
-import { requireAuth } from "../middleware/authMiddleware.js";
+// import { Router } from "express";
+// import { updateMyDisplayName } from "../controllers/userController.js";
+// import { requireAuth } from "../middleware/authMiddleware.js";
 
-const router = Router();
+// const router = Router();
 
-router.patch("/me/display-name", requireAuth, updateMyDisplayName);
+// router.patch("/me/display-name", requireAuth, updateMyDisplayName);
 
-export default router;
+// export default router;

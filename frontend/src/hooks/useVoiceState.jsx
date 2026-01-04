@@ -211,7 +211,6 @@ export function useVoiceState({ roomId }) {
       if (!s || !roomId) return;
 
       s.emit("voice:state", {
-        roomId: String(roomId),
         inVoice:
           typeof patch.inVoice === "boolean"
             ? patch.inVoice

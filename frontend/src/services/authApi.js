@@ -11,8 +11,3 @@ export async function getMe(token) {
   const { data } = await api.get("/auth/me");
   return data;
 }
-
-export async function updateDisplayName(displayName) {
-  const { data } = await api.patch("/users/me/display-name", { displayName });
-  return data;
-}

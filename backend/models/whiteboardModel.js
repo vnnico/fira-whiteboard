@@ -34,8 +34,6 @@ const boardSchema = new mongoose.Schema(
     locked: { type: Boolean, default: false },
 
     elements: { type: [mongoose.Schema.Types.Mixed], default: [] },
-
-    schemaVersion: { type: Number, default: 1 },
   },
   { timestamps: true, versionKey: false }
 );

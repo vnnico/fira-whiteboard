@@ -1,4 +1,3 @@
-import React from "react";
 import { useAuth } from "../../hooks/useAuth";
 
 export default function Topbar() {
@@ -12,7 +11,7 @@ export default function Topbar() {
       </div>
       <div className="flex items-center gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-fira-primary text-xs font-semibold text-white">
-          {user?.displayName?.[0] ?? "U"}
+          {user?.username?.[0]?.toUpperCase() ?? "U"}
         </div>
       </div>
     </header>

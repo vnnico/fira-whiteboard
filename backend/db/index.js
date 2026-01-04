@@ -6,26 +6,22 @@ const DEFAULT_USERS = [
     _id: "1",
     username: "admin",
     password: "admin",
-    displayName: "User-000001",
   },
-  { _id: "2", username: "anto", password: "anto", displayName: "User-000002" },
-  { _id: "3", username: "nico", password: "nico", displayName: "User-000003" },
+  { _id: "2", username: "anto", password: "anto" },
+  { _id: "3", username: "nico", password: "nico" },
   {
     _id: "4",
     username: "hansen",
     password: "hansen",
-    displayName: "User-000004",
   },
   {
     _id: "5",
     username: "wilson",
     password: "wilson",
-    displayName: "User-000005",
   },
 ];
 
 export async function initDb() {
-  // Pastikan index dibuat
   await User.syncIndexes();
   await ChatMessage.syncIndexes();
 

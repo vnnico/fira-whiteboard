@@ -4,24 +4,47 @@ import {
   upsertUserSocket,
   removeUserSocket,
 } from "../models/voiceStateStore.js";
+import { ensureBoardExistsAndUpsertMember } from "../utils/boardMembership.js";
 
 export function registerVoiceHandlers(io, socket) {
-  const getRoomId = (roomId) => roomId ?? socket.data?.roomId;
+  const getRoomId = () => String(socket.data?.roomId ?? "");
+  const getUserId = () => String(socket.data?.userId ?? "");
 
-  socket.on("join-room", ({ roomId }) => {
+  socket.on("join-room", async ({ roomId }) => {
+    const rid = String(roomId || "").trim();
+    const uid = String(socket.user?.id || "");
+
+    if (!rid || !uid) return;
+
     try {
-      const rid = String(roomId || "");
-      if (!rid) return;
+      const res = await ensureBoardExistsAndUpsertMember(rid, uid, {
+        select: "roomId createdBy members roles",
+      });
+      if (!res.ok) {
+        if (res.code === "board-not-found")
+          socket.emit("board-not-found", { roomId: rid });
+        return;
+      }
 
-      console.log("test masuk ga");
+      // const isOwner = board.createdBy && String(board.createdBy) === uid;
+      // const hasRole = !!board.roles?.[uid];
+
+      // const update = {
+      //   $addToSet: { members: uid },
+      //   $set: { updatedAt: new Date() },
+      // };
+
+      // if (!isOwner && !hasRole) {
+      //   update.$set[`roles.${uid}`] = DEFAULT_ROLE_FOR_NEW_MEMBER;
+      // }
+
+      // await Board.updateOne({ roomId: rid }, update);
+
       socket.join(rid);
       socket.data.roomId = rid;
+      socket.data.userId = uid;
 
-      const uid = String(socket.user?.id || "");
-      if (uid) {
-        socket.data.userId = uid;
-        upsertUserSocket(rid, uid, socket.id);
-      }
+      upsertUserSocket(rid, uid, socket.id);
 
       socket.emit("voice-state-snapshot", {
         roomId: rid,
@@ -29,7 +52,6 @@ export function registerVoiceHandlers(io, socket) {
       });
     } catch (err) {
       console.error("[voice] join-room:", err?.message || err);
-
       socket.emit("server-error", {
         roomId: rid,
         action: "join-room",
@@ -38,12 +60,12 @@ export function registerVoiceHandlers(io, socket) {
     }
   });
 
-  socket.on("voice:state", ({ roomId, inVoice, deafened, micEnabled }) => {
-    const rid = String(getRoomId(roomId) || "");
-    const uid = String(socket.user?.id || socket.data?.userId || "");
-    try {
-      if (!rid || !uid) return;
+  socket.on("voice:state", ({ inVoice, deafened, micEnabled }) => {
+    const rid = getRoomId();
+    const uid = getUserId();
+    if (!rid || !uid) return;
 
+    try {
       const patch = {};
       if (typeof inVoice === "boolean") patch.inVoice = inVoice;
       if (typeof deafened === "boolean") patch.deafened = deafened;
@@ -60,7 +82,6 @@ export function registerVoiceHandlers(io, socket) {
       });
     } catch (err) {
       console.error("[voice] voice:state error:", err?.message || err);
-
       socket.emit("server-error", {
         roomId: rid,
         action: "voice:state",

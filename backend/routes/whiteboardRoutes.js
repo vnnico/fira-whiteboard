@@ -13,7 +13,7 @@ import { requireAuth } from "../middleware/authMiddleware.js";
 const router = Router();
 
 // create new whiteboard room
-router.post("/", requireAuth, getWhiteboards);
+router.get("/", requireAuth, getWhiteboards);
 router.post("/create", requireAuth, createWhiteboard);
 router.get("/:roomId/exists", checkWhiteboardExists);
 router.get("/:roomId/meta", requireAuth, getWhiteboardMeta);

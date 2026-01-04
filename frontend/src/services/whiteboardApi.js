@@ -13,7 +13,7 @@ export async function getWhiteboardMeta(roomId) {
 }
 
 export async function getWhiteboards() {
-  const { data } = await api.post("/whiteboards");
+  const { data } = await api.get("/whiteboards");
   return data; // { roomId, whiteboard: { ... } }
 }
 

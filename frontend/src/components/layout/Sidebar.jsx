@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   FiGrid,
   FiLogOut,
@@ -64,7 +64,6 @@ export default function Sidebar({ activeSection = "my", onChangeSection }) {
       <div className="border-t border-slate-800 px-3 py-3 text-xs">
         {!collapsed && (
           <div className="mb-2 text-slate-300">
-            <div className="font-medium">{user?.displayName}</div>
             <div className="text-[11px] text-slate-400">@{user?.username}</div>
           </div>
         )}
