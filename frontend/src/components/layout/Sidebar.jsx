@@ -25,7 +25,17 @@ export default function Sidebar({ activeSection = "my", onChangeSection }) {
     >
       <div className="flex items-center justify-between px-3 py-4">
         {!collapsed && (
-          <span className="text-sm font-semibold tracking-wide">Fira</span>
+          <div className="px-1 mt-[0.5]">
+            <div className="leading-none">
+              <div className="text-sm font-extrabold tracking-[0.22em] text-white">
+                FIRA
+              </div>
+              <div className="mt-1 flex items-center gap-1">
+                <div className="h-0.5 w-8 rounded-full bg-fira-primary/90" />
+                <div className="h-0.5 w-3 rounded-full bg-white/30" />
+              </div>
+            </div>
+          </div>
         )}
         <button
           className="rounded-full bg-slate-800 p-1 text-xs"
@@ -62,11 +72,6 @@ export default function Sidebar({ activeSection = "my", onChangeSection }) {
       </nav>
 
       <div className="border-t border-slate-800 px-3 py-3 text-xs">
-        {!collapsed && (
-          <div className="mb-2 text-slate-300">
-            <div className="text-[11px] text-slate-400">@{user?.username}</div>
-          </div>
-        )}
         <button
           onClick={logout}
           className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-slate-300 hover:bg-slate-800"

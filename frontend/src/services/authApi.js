@@ -1,5 +1,11 @@
 import api, { setAuthToken } from "./apiClient";
 
+export async function register(username, password) {
+  const { data } = await api.post("/auth/register", { username, password });
+  setAuthToken(data.token);
+  return data;
+}
+
 export async function login(username, password) {
   const { data } = await api.post("/auth/login", { username, password });
   setAuthToken(data.token);

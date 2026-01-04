@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import {
   FiX,
   FiMic,
@@ -22,20 +22,46 @@ const formatDeviceLabel = (d) => {
   return raw.slice(0, max - 1) + "…";
 };
 
-function controlButtonClass(variant = "secondary", disabled = false) {
+function SlashedIcon({
+  children,
+  slashClassName = "bg-rose-500/90",
+  slashHeightClass = "h-6",
+  slashWidthClass = "w-[2px]",
+}) {
+  return (
+    <span className="relative inline-flex">
+      {children}
+      <span
+        className={[
+          "pointer-events-none absolute left-1/2 top-1/2",
+          "-translate-x-1/2 -translate-y-1/2 rotate-45 rounded-full",
+          slashHeightClass,
+          slashWidthClass,
+          slashClassName,
+        ].join(" ")}
+      />
+    </span>
+  );
+}
+
+function controlButtonClass(
+  variant = "surface",
+  disabled = false,
+  readOnly = false
+) {
   const base =
     "relative flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200 focus:outline-none";
 
   const variants = {
-    dark: "bg-slate-800 text-white hover:bg-slate-900",
-    secondary: "bg-slate-100 text-slate-600 hover:bg-slate-200",
-    danger: "bg-rose-50 text-rose-500 hover:bg-rose-100",
+    surface:
+      "bg-white text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-50",
     "danger-ghost": "text-rose-500 hover:bg-rose-50 hover:text-rose-600",
-    success: "bg-emerald-500 text-white hover:bg-emerald-600",
   };
 
-  const cls = `${base} ${variants[variant] || variants.secondary}`;
-  return disabled ? `${cls} opacity-40 cursor-not-allowed` : cls;
+  let cls = `${base} ${variants[variant] || variants.surface}`;
+  if (readOnly) cls += " cursor-default";
+  if (disabled) cls += " opacity-40 cursor-not-allowed hover:bg-inherit";
+  return cls;
 }
 
 export default function ManagementSidebar({
@@ -77,6 +103,7 @@ export default function ManagementSidebar({
                   ? "text-slate-900 border-b-2 border-slate-900"
                   : "text-slate-400 hover:text-slate-600"
               }`}
+              type="button"
             >
               People ({participants.length})
             </button>
@@ -88,6 +115,7 @@ export default function ManagementSidebar({
                   ? "text-slate-900 border-b-2 border-slate-900"
                   : "text-slate-400 hover:text-slate-600"
               }`}
+              type="button"
             >
               Chat
             </button>
@@ -96,6 +124,7 @@ export default function ManagementSidebar({
           <button
             onClick={onClose}
             className="rounded-full p-2 text-slate-400 hover:bg-slate-50"
+            type="button"
           >
             <FiX className="h-5 w-5" />
           </button>
@@ -182,11 +211,11 @@ function ParticipantCard({
   const isSelf = !!participant.isMe;
   const isEditor = String(participant.role || "VIEWER") === "EDITOR";
 
-  // - participant.voice.{inVoice,micEnabled,deafened}
-  // - legacy: participant.isInVoice / participant.isMuted / participant.isDeafened
+  // voice snapshot
   const v = participant.voice || {};
   const inVoice =
     typeof v.inVoice === "boolean" ? v.inVoice : !!participant.isInVoice;
+
   const deafened =
     typeof v.deafened === "boolean" ? v.deafened : !!participant.isDeafened;
 
@@ -198,13 +227,15 @@ function ParticipantCard({
       : undefined;
 
   const micKnown = typeof micEnabled === "boolean";
-  const isMuted = micKnown ? !micEnabled : false;
+
+  const micIsOn = micKnown ? micEnabled : true;
+  const micIsOff = !micIsOn;
 
   const canModerate = isOwner && !isSelf && inVoice;
+  const canSelfControl = isSelf && voiceState?.connectionState === "connected";
 
   const initial = getInitials(participant.name, participant.id);
   const bg = getAvatarColor(participant.id);
-  const canSelfControl = isSelf && voiceState?.connectionState === "connected";
 
   return (
     <div className="flex items-center justify-between rounded-xl border border-slate-100 p-3 transition-colors hover:bg-slate-50">
@@ -244,116 +275,117 @@ function ParticipantCard({
               onSetRole?.(participant.id, isEditor ? "VIEWER" : "EDITOR")
             }
             title={isEditor ? "Set as viewer" : "Set as editor"}
-            className={controlButtonClass(
-              isEditor ? "dark" : "secondary",
-              false
-            )}
+            className={controlButtonClass("surface", false)}
           >
-            <FiEdit2 size={16} />
+            <FiEdit2 size={16} className={isEditor ? "text-emerald-600" : ""} />
           </button>
         )}
 
         {isSelf && (
-          <button
-            type="button"
-            onClick={() => voiceState?.toggleMic?.()}
-            disabled={!canSelfControl}
-            title={
-              !canSelfControl
-                ? "You are not connected to voice"
-                : voiceState?.isMicEnabled
-                ? "Turn mic off"
-                : "Turn mic on"
-            }
-            className={controlButtonClass(
-              !canSelfControl
-                ? "secondary"
-                : voiceState?.isMicEnabled
-                ? "dark"
-                : "danger",
-              !canSelfControl
-            )}
-          >
-            {voiceState?.isMicEnabled ? (
-              <FiMic size={16} />
-            ) : (
-              <FiMicOff size={16} />
-            )}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => voiceState?.toggleMic?.()}
+              disabled={!canSelfControl}
+              title={
+                !canSelfControl
+                  ? "You are not connected to voice"
+                  : voiceState?.isMicEnabled
+                  ? "Turn mic off"
+                  : "Turn mic on"
+              }
+              className={controlButtonClass("surface", !canSelfControl)}
+            >
+              {voiceState?.isMicEnabled ? (
+                <FiMic size={16} className="text-slate-700" />
+              ) : (
+                <SlashedIcon
+                  slashClassName="bg-rose-500/90"
+                  rotateClass="rotate-45"
+                  slashHeightClass="h-5"
+                >
+                  <FiMic size={16} className="text-rose-500/90" />
+                </SlashedIcon>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => voiceState?.toggleDeafen?.()}
+              disabled={!canSelfControl}
+              title={
+                !canSelfControl
+                  ? "You are not connected to voice"
+                  : voiceState?.isDeafened
+                  ? "Undeafen"
+                  : "Deafen"
+              }
+              className={controlButtonClass("surface", !canSelfControl)}
+            >
+              {voiceState?.isDeafened ? (
+                <SlashedIcon>
+                  <FiHeadphones size={16} className="text-rose-500/90" />
+                </SlashedIcon>
+              ) : (
+                <FiHeadphones size={16} className="text-slate-700" />
+              )}
+            </button>
+          </>
         )}
 
-        {isSelf && (
-          <button
-            type="button"
-            onClick={() => voiceState?.toggleDeafen?.()}
-            disabled={!canSelfControl}
-            title={
-              !canSelfControl
-                ? "You are not connected to voice"
-                : voiceState?.isDeafened
-                ? "Undeafen"
-                : "Deafen"
-            }
-            className={controlButtonClass("secondary", !canSelfControl)}
-          >
-            <FiHeadphones
-              className={voiceState?.isDeafened ? "opacity-40" : ""}
-              size={16}
-            />
-          </button>
-        )}
-
+        {/* OTHER PARTICIPANTS */}
         {!isSelf && (
           <>
-            {/* Mic */}
             {isOwner ? (
               <button
                 type="button"
                 onClick={() => onMuteParticipant?.(participant.id)}
-                disabled={!canModerate || isMuted}
+                disabled={!canModerate || micIsOff}
                 title={
                   !inVoice
                     ? "User is not in voice"
-                    : isMuted
+                    : micIsOff
                     ? "Already muted"
                     : "Mute participant"
                 }
                 className={controlButtonClass(
-                  "danger",
-                  !canModerate || isMuted
+                  "surface",
+                  !canModerate || micIsOff
                 )}
               >
-                <FiMicOff size={16} />
+                {micIsOn ? (
+                  <FiMic size={16} className="text-slate-700" />
+                ) : (
+                  <SlashedIcon
+                    slashClassName="bg-rose-500/90"
+                    rotateClass="rotate-45"
+                    slashHeightClass="h-5"
+                  >
+                    <FiMic size={16} className="text-rose-500/90" />
+                  </SlashedIcon>
+                )}
               </button>
             ) : (
               <div
-                className={controlButtonClass(
-                  !inVoice
-                    ? "secondary"
-                    : micKnown && micEnabled
-                    ? "secondary"
-                    : "danger",
-                  true
-                )}
+                className={controlButtonClass("surface", false, true)}
                 title={
-                  !inVoice
-                    ? "Not in voice"
-                    : micKnown
-                    ? micEnabled
-                      ? "Mic on"
-                      : "Mic off"
-                    : "Mic unknown"
+                  !inVoice ? "Not in voice" : micIsOn ? "Mic on" : "Mic off"
                 }
               >
-                {micKnown && micEnabled ? (
-                  <FiMic size={16} />
+                {micIsOn ? (
+                  <FiMic size={16} className="text-slate-700" />
                 ) : (
-                  <FiMicOff size={16} />
+                  <SlashedIcon
+                    slashClassName="bg-rose-500/90"
+                    rotateClass="rotate-45"
+                    slashHeightClass="h-5"
+                  >
+                    <FiMic size={16} className="text-rose-500/90" />
+                  </SlashedIcon>
                 )}
               </div>
             )}
 
-            {/* Headphone */}
             {isOwner ? (
               <button
                 type="button"
@@ -368,30 +400,43 @@ function ParticipantCard({
                     ? "Undeafen"
                     : "Deafen"
                 }
-                className={controlButtonClass("secondary", !canModerate)}
+                className={controlButtonClass("surface", !canModerate)}
               >
-                <FiHeadphones
-                  className={deafened ? "opacity-40" : ""}
-                  size={16}
-                />
+                {deafened ? (
+                  <SlashedIcon
+                    slashClassName="bg-rose-500/90"
+                    rotateClass="rotate-45"
+                    slashHeightClass="h-5"
+                  >
+                    <FiHeadphones size={16} className="text-rose-500/90" />
+                  </SlashedIcon>
+                ) : (
+                  <FiHeadphones size={16} className="text-slate-700" />
+                )}
               </button>
             ) : (
               <div
-                className={controlButtonClass("secondary", true)}
+                className={controlButtonClass("surface", false, true)}
                 title={
                   !inVoice ? "Not in voice" : deafened ? "Deafened" : "Hearing"
                 }
               >
-                <FiHeadphones
-                  className={deafened ? "opacity-40" : ""}
-                  size={16}
-                />
+                {deafened ? (
+                  <SlashedIcon
+                    slashClassName="bg-rose-500/90"
+                    rotateClass="rotate-45"
+                    slashHeightClass="h-5"
+                  >
+                    <FiHeadphones size={16} className="text-rose-500/90" />
+                  </SlashedIcon>
+                ) : (
+                  <FiHeadphones size={16} className="text-slate-700" />
+                )}
               </div>
             )}
           </>
         )}
 
-        {/* Kick (OWNER only, not self) */}
         {isOwner && !isSelf && (
           <button
             type="button"

@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
-    _id: { type: String, required: true },
     username: { type: String, required: true, unique: true, index: true },
     password: { type: String, required: true },
   },
@@ -23,6 +22,15 @@ function mapAuthUser(doc) {
     username: doc.username,
     password: doc.password,
   };
+}
+
+export async function createUser({ id, username, passwordHash }) {
+  const doc = await User.create({
+    username: String(username),
+    password: String(passwordHash),
+  });
+
+  return { id: String(doc._id), username: doc.username };
 }
 
 export async function findAuthByUsername(username) {

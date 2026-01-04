@@ -29,6 +29,16 @@ export function AuthProvider({ children }) {
     init();
   }, [token]);
 
+  const register = async (username, password) => {
+    const { token: newToken, user: newUser } = await authApi.register(
+      username,
+      password
+    );
+    setToken(newToken);
+    setUser(newUser);
+    localStorage.setItem("fira_token", newToken);
+  };
+
   const login = async (username, password) => {
     const { token: newToken, user: loggedUser } = await authApi.login(
       username,
@@ -51,6 +61,7 @@ export function AuthProvider({ children }) {
     token,
     isAuthenticated: !!token,
     loading,
+    register,
     login,
     logout,
     setUser,

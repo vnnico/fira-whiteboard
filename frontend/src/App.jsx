@@ -5,6 +5,8 @@ import { useAuth } from "./hooks/useAuth";
 import WhiteboardPage from "./pages/WhiteboardPage";
 import { useEffect, useState } from "react";
 import NotFoundPage from "./pages/NotFoundPage";
+import RegisterPage from "./pages/RegisterPage";
+import LandingPage from "./pages/LandingPage";
 
 function PrivateRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
@@ -25,9 +27,11 @@ function PrivateRoute({ children }) {
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route
-        path="/"
+        path="/dashboard"
         element={
           <PrivateRoute>
             <DashboardPage />

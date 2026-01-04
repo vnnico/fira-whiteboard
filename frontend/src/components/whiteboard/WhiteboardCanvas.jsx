@@ -911,7 +911,7 @@ export default function WhiteboardCanvas({
 
       if (confirmLeave) {
         window.removeEventListener("popstate", handlePopState);
-        navigate("/");
+        navigate("/dashboard");
       } else {
         window.history.pushState(null, document.title, window.location.href);
       }

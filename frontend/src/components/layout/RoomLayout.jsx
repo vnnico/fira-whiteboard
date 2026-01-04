@@ -240,7 +240,7 @@ export default function RoomLayout({
         await voiceState?.leaveVoice?.();
       } catch (_) {
       } finally {
-        navigate("/", { replace: true });
+        navigate("/dashboard", { replace: true });
       }
     };
 
@@ -404,7 +404,7 @@ export default function RoomLayout({
                 navigate("/login", { state: { from: location } });
                 return;
               }
-              navigate("/");
+              navigate("/dashboard");
             }}
             className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100 text-slate-600"
           >

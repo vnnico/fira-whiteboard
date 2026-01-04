@@ -7,8 +7,8 @@ export default function AvatarBadge({
   showName = false,
   nameMaxWidth = 140,
 }) {
-  var color = getAvatarColor(userId);
-  var initials = getInitials(username, userId);
+  const color = getAvatarColor(userId);
+  const initials = getInitials(username, userId);
 
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
