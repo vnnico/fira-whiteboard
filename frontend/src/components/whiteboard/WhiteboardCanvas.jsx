@@ -6,6 +6,21 @@ import {
   FiRotateCcw,
   FiSquare,
 } from "react-icons/fi";
+import {
+  LuHand,
+  LuTimer,
+  LuEraser,
+  LuPencil,
+  LuSquare,
+  LuCircle,
+  LuTriangle,
+  LuArrowDownToLine,
+  LuSlash,
+  LuText,
+  LuZoomOut,
+  LuZoomIn,
+} from "react-icons/lu";
+
 import { GrDuplicate } from "react-icons/gr";
 import { FaRegCopy } from "react-icons/fa6";
 import { RiDeleteBin6Line } from "react-icons/ri";
@@ -86,10 +101,10 @@ const isShapeTool = (t) => {
 };
 
 const getShapeIcon = (t) => {
-  if (t === ToolTypes.CIRCLE) return "○";
-  if (t === ToolTypes.TRIANGLE) return "△";
-  if (t === ToolTypes.LINE) return "／";
-  return "▢"; // default rectangle
+  if (t === ToolTypes.CIRCLE) return <LuCircle />;
+  if (t === ToolTypes.TRIANGLE) return <LuTriangle />;
+  if (t === ToolTypes.LINE) return <LuSlash />;
+  return <FiSquare />; // default rectangle
 };
 
 const isFillableTool = (t) => {
@@ -2090,7 +2105,7 @@ export default function WhiteboardCanvas({
                 className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 shadow-sm ring-1 ring-slate-900/5 hover:bg-slate-200 transition"
                 title="Timer"
               >
-                ⏱
+                <LuTimer></LuTimer>
               </button>
 
               {isTimerOpen && (
@@ -2142,18 +2157,6 @@ export default function WhiteboardCanvas({
                         title="Stop"
                       >
                         <FiSquare />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          resetTimer?.();
-                          setIsTimerOpen(false);
-                        }}
-                        className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-700"
-                        title="Reset"
-                      >
-                        <FiRotateCcw />
                       </button>
                     </div>
                   </div>
@@ -2313,7 +2316,7 @@ export default function WhiteboardCanvas({
                 setStyleOpen(false);
               }}
             >
-              ✋
+              <LuHand></LuHand>
             </ToolButton>
 
             <ToolButton
@@ -2326,7 +2329,7 @@ export default function WhiteboardCanvas({
                 setStyleOpen(false);
               }}
             >
-              ✏️
+              <LuPencil></LuPencil>
             </ToolButton>
             <ToolButton
               active={currentTool === ToolTypes.ERASER}
@@ -2339,7 +2342,7 @@ export default function WhiteboardCanvas({
                 setStyleOpen(false);
               }}
             >
-              🧽
+              <LuEraser></LuEraser>
             </ToolButton>
 
             <div className="relative">
@@ -2360,7 +2363,7 @@ export default function WhiteboardCanvas({
                   onMouseLeave={() => setShapeMenuOpen(false)}
                 >
                   <button
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
                     onClick={() => {
                       setCurrentTool(ToolTypes.RECTANGLE);
                       setShapeMenuOpen(false);
@@ -2368,11 +2371,12 @@ export default function WhiteboardCanvas({
                       setStyleOpen(false);
                     }}
                   >
-                    ▢ Rectangle
+                    <LuSquare className="my-auto"></LuSquare>
+                    <p>Rectangle</p>
                   </button>
 
                   <button
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
                     onClick={() => {
                       setCurrentTool(ToolTypes.CIRCLE);
                       setShapeMenuOpen(false);
@@ -2380,11 +2384,12 @@ export default function WhiteboardCanvas({
                       setStyleOpen(false);
                     }}
                   >
-                    ○ Circle
+                    <LuCircle className="my-auto"></LuCircle>
+                    <p>Circle</p>
                   </button>
 
                   <button
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
                     onClick={() => {
                       setCurrentTool(ToolTypes.TRIANGLE);
                       setShapeMenuOpen(false);
@@ -2392,11 +2397,12 @@ export default function WhiteboardCanvas({
                       setStyleOpen(false);
                     }}
                   >
-                    △ Triangle
+                    <LuTriangle className="my-auto"></LuTriangle>
+                    <p>Triangle</p>
                   </button>
 
                   <button
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
                     onClick={() => {
                       setCurrentTool(ToolTypes.LINE);
                       setShapeMenuOpen(false);
@@ -2404,7 +2410,8 @@ export default function WhiteboardCanvas({
                       setStyleOpen(false);
                     }}
                   >
-                    ／ Line
+                    <LuSlash className="my-auto"></LuSlash>
+                    <p>Line</p>
                   </button>
                 </div>
               )}
@@ -2442,7 +2449,7 @@ export default function WhiteboardCanvas({
                 setStyleOpen(false);
               }}
             >
-              T
+              <LuText></LuText>
             </ToolButton>
           </div>
 
@@ -2454,7 +2461,7 @@ export default function WhiteboardCanvas({
                 e.currentTarget.blur();
               }}
             >
-              +
+              <LuZoomIn></LuZoomIn>
             </button>
 
             <button
@@ -2472,7 +2479,7 @@ export default function WhiteboardCanvas({
                 e.currentTarget.blur();
               }}
             >
-              –
+              <LuZoomOut></LuZoomOut>
             </button>
           </div>
         </div>

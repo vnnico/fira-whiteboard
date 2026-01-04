@@ -362,7 +362,7 @@ export default function DashboardPage() {
                               {board.title}
                             </div>
                             <div className="text-[11px] text-slate-500">
-                              {board.updatedAt}
+                              {formatDateTime(board.createdAt)}
                             </div>
                           </div>
                           <div className="text-slate-400">•••</div>

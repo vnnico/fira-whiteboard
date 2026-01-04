@@ -3,6 +3,7 @@ import { authSocketMiddleware } from "../middleware/authMiddleware.js";
 import { registerWhiteboardHandlers } from "./whiteboardSocket.js";
 import { registerVoiceHandlers } from "./voiceSocket.js";
 import { registerChatHandlers } from "./chatSocket.js";
+import { CLIENT_ORIGIN } from "../config/env.js";
 
 let whiteboardNs = null;
 let voiceNs = null;
@@ -11,7 +12,7 @@ let chatNs = null;
 export function initSocket(httpServer) {
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_ORIGIN || true,
+      origin: CLIENT_ORIGIN,
       credentials: true,
     },
   });

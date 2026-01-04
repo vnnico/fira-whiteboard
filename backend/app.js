@@ -3,6 +3,7 @@ import cors from "cors";
 import process from "process";
 import routes from "./routes/index.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { CLIENT_ORIGIN } from "./config/env.js";
 
 const app = express();
 
@@ -14,12 +15,20 @@ process.on("uncaughtException", (err) => {
   console.error("[process] uncaughtException:", err);
 });
 
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  })
-);
+app.set("trust proxy", 1);
+const allowedOrigins = String(CLIENT_ORIGIN || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: allowedOrigins.length ? allowedOrigins : true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 
