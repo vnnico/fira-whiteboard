@@ -1,9 +1,10 @@
-// import { Router } from "express";
-// import { updateMyDisplayName } from "../controllers/userController.js";
-// import { requireAuth } from "../middleware/authMiddleware.js";
+import { Router } from "express";
 
-// const router = Router();
+import { requireAuth } from "../middleware/authMiddleware.js";
+import { onboarding } from "../controllers/userController.js";
 
-// router.patch("/me/display-name", requireAuth, updateMyDisplayName);
+const router = Router();
 
-// export default router;
+router.post("/onboarding", requireAuth, onboarding);
+
+export default router;

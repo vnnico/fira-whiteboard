@@ -1,5 +1,3 @@
-// whiteboard/utils/updateElement.js
-
 /**
  * Update satu elemen dalam array.
  * updater boleh object (merge) atau function(el) => newEl.

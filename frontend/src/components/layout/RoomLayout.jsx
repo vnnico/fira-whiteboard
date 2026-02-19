@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { FiShare2, FiMenu, FiChevronLeft, FiDownload } from "react-icons/fi";
+import {
+  FiShare2,
+  FiMenu,
+  FiChevronLeft,
+  FiDownload,
+  FiHelpCircle,
+} from "react-icons/fi";
 
 import { useLocation, useNavigate } from "react-router-dom";
 import { useVoiceState } from "../../hooks/useVoiceState";
@@ -10,6 +16,8 @@ import { useToast } from "../../hooks/useToast";
 import { useAuth } from "../../hooks/useAuth";
 import { getAvatarColor, getInitials } from "../../utils/avatarUtils";
 import { useChat } from "../../hooks/useChat";
+import WhiteboardGuideModal from "../whiteboard/WhiteboardGuideModal";
+import { onboarding } from "../../services/userApi";
 
 export default function RoomLayout({
   children,
@@ -40,7 +48,7 @@ export default function RoomLayout({
 
   const myId = normId(user?.id);
   const lkById = new Map(
-    (voiceState?.participants || []).map((p) => [normId(p.id), p])
+    (voiceState?.participants || []).map((p) => [normId(p.id), p]),
   );
 
   const hasJoinedWhiteboardRoom = Array.isArray(roomMembers)
@@ -63,8 +71,8 @@ export default function RoomLayout({
       typeof v.micEnabled === "boolean"
         ? v.micEnabled
         : lk
-        ? !lk.isMuted
-        : undefined;
+          ? !lk.isMuted
+          : undefined;
 
     return {
       ...m,
@@ -89,6 +97,20 @@ export default function RoomLayout({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const inputRef = useRef(null);
+
+  // Disimpan di localStorage per userId. Nanti bisa diganti jadi flag dari DB.
+  const guideStorageKey = (uid) => `fira_wb_guide_seen_v1:${uid || "anon"}`;
+
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [hasSeenGuide, setHasSeenGuide] = useState(() => {
+    try {
+      return !user?.is_new;
+    } catch {
+      return false;
+    }
+  });
+
+  const autoGuideOpenedRef = useRef(false);
 
   const isChatVisible = isSidebarOpen && activeSidebarTab === "chat";
   const [unreadCount, setUnreadCount] = useState(0);
@@ -127,6 +149,40 @@ export default function RoomLayout({
   };
 
   const [remainingMs, setRemainingMs] = useState(0);
+
+  useEffect(() => {
+    // Reset baseline ketika user berubah
+    autoGuideOpenedRef.current = false;
+    try {
+      setHasSeenGuide(!user?.is_new);
+    } catch {
+      setHasSeenGuide(false);
+    }
+  }, [myId]);
+
+  useEffect(() => {
+    // Auto-open sekali ketika: sudah connected + user sudah terdaftar di roomMembers.
+    if (!myId) return;
+    if (hasSeenGuide) return;
+    if (autoGuideOpenedRef.current) return;
+    if (wbConnectionState !== "connected") return;
+    if (!hasJoinedWhiteboardRoom) return;
+
+    autoGuideOpenedRef.current = true;
+    setIsGuideOpen(true);
+  }, [myId, hasSeenGuide, wbConnectionState, hasJoinedWhiteboardRoom]);
+
+  const markGuideSeen = async () => {
+    try {
+      if (user?.is_new) {
+        await onboarding();
+      }
+    } catch {
+      // ignore
+    }
+    setHasSeenGuide(true);
+    setIsGuideOpen(false);
+  };
 
   useEffect(() => {
     if (!timerState?.running || !timerState?.endAt) {
@@ -293,7 +349,7 @@ export default function RoomLayout({
     // hitung hanya message dari user lain
     const myId = String(user?.id || "");
     const inc = newMsgs.filter(
-      (m) => String(m?.sender?.id || "") !== myId
+      (m) => String(m?.sender?.id || "") !== myId,
     ).length;
 
     if (inc > 0) setUnreadCount((c) => c + inc);
@@ -443,6 +499,18 @@ export default function RoomLayout({
               </div>
             )}
             <div className="my-2 w-px bg-slate-200" />
+            {/* Guide button */}
+            <button
+              onClick={() => setIsGuideOpen(true)}
+              className="relative flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+              title="Guide"
+              aria-label="Open guide"
+            >
+              <FiHelpCircle className="h-5 w-5" />
+              {!hasSeenGuide && (
+                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse" />
+              )}
+            </button>
 
             {/* Export button */}
             <button
@@ -566,6 +634,11 @@ export default function RoomLayout({
         onToggleDeafenParticipant={(targetUserId, deafened) =>
           voiceState?.ownerSetDeafenParticipant?.(targetUserId, deafened)
         }
+      />
+      <WhiteboardGuideModal
+        open={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
+        onFinish={markGuideSeen}
       />
     </div>
   );

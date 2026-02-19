@@ -1,23 +1,19 @@
-// import { updateDisplayName } from "../models/userModel.js";
+import { findById, updateIsNew } from "../models/userModel.js";
 
-// export async function updateMyDisplayName(req, res, next) {
-//   try {
-//     const { displayName } = req.body;
-//     if (!displayName?.trim()) {
-//       return res.status(400).json({ message: "Display name is required" });
-//     }
+export async function onboarding(req, res, next) {
+  try {
+    const user = await findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
-//     const updated = await updateDisplayName(req.user.id, displayName.trim());
-//     if (!updated) {
-//       return res.status(404).json({ message: "User not found" });
-//     }
+    if (!user.is_new)
+      return res.status(400).json({ message: "Invalid Request" });
 
-//     return res.status(200).json({
-//       id: updated.id,
-//       username: updated.username,
-//       displayName: updated.displayName,
-//     });
-//   } catch (err) {
-//     next(err);
-//   }
-// }
+    await updateIsNew(user.id);
+
+    return res.status(200).json({ message: "Updated successfully" });
+  } catch (err) {
+    next(err);
+  }
+}

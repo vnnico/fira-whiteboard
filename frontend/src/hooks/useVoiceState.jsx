@@ -119,7 +119,7 @@ export function useVoiceState({ roomId }) {
           (d) =>
             d.deviceId &&
             d.deviceId !== "default" &&
-            d.deviceId !== "communications"
+            d.deviceId !== "communications",
         );
       };
 
@@ -166,7 +166,7 @@ export function useVoiceState({ roomId }) {
         }
       }
     },
-    [refreshDevices]
+    [refreshDevices],
   );
 
   useEffect(() => {
@@ -191,7 +191,7 @@ export function useVoiceState({ roomId }) {
 
   const setAllRemoteAudioMuted = useCallback((muted) => {
     for (const el of remoteAudioElsRef.current.values()) {
-      el.muted = muted;
+      if (el) el.muted = muted;
     }
   }, []);
 
@@ -200,7 +200,7 @@ export function useVoiceState({ roomId }) {
       publication?.trackSid ||
         publication?.sid ||
         track?.sid ||
-        `${publication?.kind || track?.kind}-${Date.now()}`
+        `${publication?.kind || track?.kind}-${Date.now()}`,
     );
   }, []);
 
@@ -225,7 +225,7 @@ export function useVoiceState({ roomId }) {
             : isDeafenedRef.current,
       });
     },
-    [roomId]
+    [roomId],
   );
 
   // Connect /voice socket once per roomId
@@ -328,7 +328,7 @@ export function useVoiceState({ roomId }) {
 
     // reconcile local mic state from LiveKit publication (prevents drift)
     const micPub = room.localParticipant.getTrackPublication?.(
-      Track.Source.Microphone
+      Track.Source.Microphone,
     );
     const isMuted = micPub ? micPub.isMuted : true;
 
@@ -622,7 +622,7 @@ export function useVoiceState({ roomId }) {
             (d) =>
               d.deviceId &&
               d.deviceId !== "default" &&
-              d.deviceId !== "communications"
+              d.deviceId !== "communications",
           );
 
           if (fallback?.deviceId) {
@@ -687,7 +687,7 @@ export function useVoiceState({ roomId }) {
       if (!roomId || !targetUserId) return;
       await moderateMute(String(roomId), String(targetUserId));
     },
-    [roomId]
+    [roomId],
   );
 
   const ownerSetDeafenParticipant = useCallback(
@@ -695,7 +695,7 @@ export function useVoiceState({ roomId }) {
       if (!roomId || !targetUserId) return;
       await moderateDeafen(String(roomId), String(targetUserId), !!deafened);
     },
-    [roomId]
+    [roomId],
   );
 
   // Cleanup kalau komponen unmount
@@ -750,6 +750,6 @@ export function useVoiceState({ roomId }) {
       ownerMuteParticipant,
       ownerSetDeafenParticipant,
       remoteVoiceStates,
-    ]
+    ],
   );
 }

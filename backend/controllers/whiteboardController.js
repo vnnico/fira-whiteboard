@@ -10,7 +10,7 @@ export async function checkWhiteboardExists(req, res, next) {
 
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        rid
+        rid,
       );
     if (!isUuid) {
       return res.status(200).json({ exists: false });
@@ -135,7 +135,7 @@ export async function updateTitle(req, res, next) {
     const board = await Board.findOneAndUpdate(
       { roomId: rid },
       { $set: { title: nextTitle, updatedAt: new Date() } },
-      { new: true }
+      { new: true },
     )
       .select("roomId title createdBy members locked createdAt updatedAt")
       .lean();
@@ -180,6 +180,33 @@ export async function deleteWhiteboard(req, res, next) {
         } catch {}
       }
     }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function removeWhiteboard(req, res, next) {
+  try {
+    const userId = String(req.user.id);
+    const rid = String(req.params.roomId || "");
+    if (!rid) return res.status(400).json({ message: "Missing roomId" });
+
+    const board = await Board.findOne({ roomId: rid })
+      .select("roomId createdBy")
+      .lean();
+
+    if (!board) return res.status(404).json({ message: "Board not found" });
+    if (String(board.createdBy) === userId)
+      return res
+        .status(400)
+        .json({ message: "Owner cannot remove their own board" });
+
+    await Board.updateOne(
+      { roomId: rid },
+      { $pull: { members: userId }, $unset: { [`roles.${userId}`]: "" } },
+    );
 
     return res.status(200).json({ success: true });
   } catch (err) {

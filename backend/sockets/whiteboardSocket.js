@@ -1,7 +1,7 @@
 import { Board, Roles } from "../models/whiteboardModel.js";
 import { isBoardMember } from "../utils/boardMembership.js";
 
-const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.EDITOR;
+const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.VIEWER;
 const MIN_TIMER_MS = 5 * 60 * 1000;
 const MAX_TIMER_MS = 120 * 60 * 1000;
 
@@ -68,17 +68,28 @@ async function upsertElementInDb(roomId, element) {
   const elementId = String(element?.id || "");
   if (!rid || !elementId) return;
 
+  if (element?.isDeleted) {
+    await Board.updateOne(
+      { roomId: rid },
+      {
+        $pull: { elements: { id: elementId } },
+        $set: { updatedAt: new Date() },
+      },
+    );
+    return;
+  }
+
   const now = new Date();
 
   const updated = await Board.updateOne(
     { roomId: rid, "elements.id": elementId },
-    { $set: { "elements.$": element, updatedAt: now } }
+    { $set: { "elements.$": element, updatedAt: now } },
   );
 
   if ((updated?.matchedCount || 0) === 0) {
     await Board.updateOne(
       { roomId: rid },
-      { $push: { elements: element }, $set: { updatedAt: now } }
+      { $push: { elements: element }, $set: { updatedAt: now } },
     );
   }
 }
@@ -88,7 +99,7 @@ async function clearBoardInDb(roomId) {
   if (!rid) return;
   await Board.updateOne(
     { roomId: rid },
-    { $set: { elements: [], updatedAt: new Date() } }
+    { $set: { elements: [], updatedAt: new Date() } },
   );
 }
 
@@ -393,7 +404,7 @@ export function registerWhiteboardHandlers(io, socket) {
       if (lockOwner && String(lockOwner) !== requesterId) {
         emitPermissionDenied(
           "element-update",
-          "Element is locked by another user"
+          "Element is locked by another user",
         );
         return;
       }
@@ -401,6 +412,21 @@ export function registerWhiteboardHandlers(io, socket) {
       socket.to(rid).emit("element-update", { element });
 
       if (isFinal) {
+        // If this update is a delete, also release any lock in server memory.
+        if (element?.isDeleted) {
+          const roomLocks2 = locksByRoom.get(rid);
+          const owner = roomLocks2?.get(String(element.id));
+          if (roomLocks2 && owner) {
+            roomLocks2.delete(String(element.id));
+            if (roomLocks2.size === 0) locksByRoom.delete(rid);
+
+            io.to(rid).emit("element-lock", {
+              elementId: String(element.id),
+              userId: String(owner),
+              locked: false,
+            });
+          }
+        }
         await upsertElementInDb(rid, element);
       }
     } catch (err) {
@@ -431,7 +457,7 @@ export function registerWhiteboardHandlers(io, socket) {
     } catch (err) {
       console.error(
         "[whiteboard] whiteboard-clear error:",
-        err?.message || err
+        err?.message || err,
       );
 
       socket.emit("server-error", {
@@ -589,7 +615,7 @@ export function registerWhiteboardHandlers(io, socket) {
       if (String(socket.data?.role || Roles.VIEWER) !== Roles.OWNER) {
         emitPermissionDenied(
           "moderation:set-role",
-          "Only owner can change roles"
+          "Only owner can change roles",
         );
         return;
       }
@@ -598,7 +624,7 @@ export function registerWhiteboardHandlers(io, socket) {
       if (tid === uid) {
         emitPermissionDenied(
           "moderation:set-role",
-          "Cannot change your own role"
+          "Cannot change your own role",
         );
         return;
       }
@@ -614,7 +640,7 @@ export function registerWhiteboardHandlers(io, socket) {
       if (!isBoardMember(board, tid)) {
         emitPermissionDenied(
           "moderation:set-role",
-          "Target must already be a member"
+          "Target must already be a member",
         );
         return;
       }
@@ -624,7 +650,7 @@ export function registerWhiteboardHandlers(io, socket) {
         {
           $addToSet: { members: tid },
           $set: { [`roles.${tid}`]: role, updatedAt: new Date() },
-        }
+        },
       );
 
       if ((updated?.matchedCount || 0) === 0) {
@@ -642,7 +668,7 @@ export function registerWhiteboardHandlers(io, socket) {
     } catch (err) {
       console.error(
         "[whiteboard] moderation:set-role error:",
-        err?.message || err
+        err?.message || err,
       );
 
       socket.emit("server-error", {

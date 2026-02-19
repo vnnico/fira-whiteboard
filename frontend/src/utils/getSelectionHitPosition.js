@@ -42,7 +42,6 @@ export function getSelectionHitPosition(el, x, y, pad = 8, handle = 10) {
     return CursorPosition.INSIDE;
   }
 
-  // (optional) edges
   if (Math.abs(x - left) <= handle) return CursorPosition.LEFT;
   if (Math.abs(x - right) <= handle) return CursorPosition.RIGHT;
   if (Math.abs(y - top) <= handle) return CursorPosition.TOP;

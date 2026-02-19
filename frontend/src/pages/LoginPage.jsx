@@ -7,6 +7,8 @@ import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -37,6 +39,13 @@ export default function LoginPage() {
 
     if (!username || !password) {
       showToast("Username and password are required", "error");
+      return;
+    }
+    if (!USERNAME_RE.test(username)) {
+      showToast(
+        "Username must be 3-20 characters and only letters, numbers, underscore",
+        "error",
+      );
       return;
     }
 
