@@ -30,8 +30,7 @@ export function useWhiteboard(roomId) {
   const myUserId = String(user?.id || "");
 
   const { showToast } = useToast();
-
-  const [role, setRole] = useState("VIEWER");
+  const [role, setRole] = useState(null);
   const [canEdit, setCanEdit] = useState(false);
   const [locked, setLocked] = useState(false);
 
@@ -47,7 +46,6 @@ export function useWhiteboard(roomId) {
     startedBy: null,
   });
 
-  // ------ socket setup ------
   useEffect(() => {
     if (!token || !roomId) return;
 
@@ -92,7 +90,7 @@ export function useWhiteboard(roomId) {
       showToast?.("Session ended", "info");
 
       window.dispatchEvent(
-        new CustomEvent("wb-kicked", { detail: { reason: reason || "timer" } })
+        new CustomEvent("wb-kicked", { detail: { reason: reason || "timer" } }),
       );
     });
 
@@ -108,14 +106,14 @@ export function useWhiteboard(roomId) {
 
         gotBoardStateRef.current = true;
         tryMarkHydrated();
-      }
+      },
     );
 
     s.on("board-not-found", ({ roomId: notFoundRoomId }) => {
       window.dispatchEvent(
         new CustomEvent("wb-not-found", {
           detail: { roomId: notFoundRoomId || roomId },
-        })
+        }),
       );
     });
 
@@ -228,7 +226,9 @@ export function useWhiteboard(roomId) {
       showToast?.(reason || "You were removed by host", "error");
       // Signal to page/UI that we should exit room
       window.dispatchEvent(
-        new CustomEvent("wb-kicked", { detail: { reason: reason || "kicked" } })
+        new CustomEvent("wb-kicked", {
+          detail: { reason: reason || "kicked" },
+        }),
       );
     });
 
@@ -241,7 +241,7 @@ export function useWhiteboard(roomId) {
       setLocks({});
       setRoomMembers([]);
       setConnectionState("disconnected");
-      setRole("VIEWER");
+      setRole(null);
       setCanEdit(false);
       setLocked(false);
       setIsHydrated(false);
@@ -272,7 +272,7 @@ export function useWhiteboard(roomId) {
       (payload) =>
         rawEmitElementUpdate.current && rawEmitElementUpdate.current(payload),
       30,
-      { leading: true, trailing: true }
+      { leading: true, trailing: true },
     );
 
     return () => {
@@ -290,7 +290,7 @@ export function useWhiteboard(roomId) {
     emitCursorThrottled.current = throttle(
       (payload) => rawEmitCursor.current && rawEmitCursor.current(payload),
       CURSOR_THROTTLE_MS,
-      { leading: true, trailing: true }
+      { leading: true, trailing: true },
     );
 
     return () => {

@@ -32,7 +32,7 @@ export function AuthProvider({ children }) {
   const register = async (username, password) => {
     const { token: newToken, user: newUser } = await authApi.register(
       username,
-      password
+      password,
     );
     setToken(newToken);
     setUser(newUser);
@@ -42,7 +42,7 @@ export function AuthProvider({ children }) {
   const login = async (username, password) => {
     const { token: newToken, user: loggedUser } = await authApi.login(
       username,
-      password
+      password,
     );
     setToken(newToken);
     setUser(loggedUser);

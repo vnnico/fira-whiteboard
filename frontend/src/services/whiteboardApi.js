@@ -32,3 +32,8 @@ export async function deleteWhiteboard(roomId) {
   const { data } = await api.delete(`/whiteboards/${roomId}`);
   return data;
 }
+
+export async function removeWhiteboard(roomId) {
+  const { data } = await api.delete(`/whiteboards/joined/${roomId}`);
+  return data;
+}

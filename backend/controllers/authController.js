@@ -14,6 +14,7 @@ function signToken(user) {
 }
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/;
 
 export async function register(req, res, next) {
   try {
@@ -29,13 +30,20 @@ export async function register(req, res, next) {
     if (!USERNAME_RE.test(username)) {
       return res.status(400).json({
         message:
-          "username must be 3-20 chars and only letters, numbers, underscore",
+          "username must be 3-20 characters and only letters, numbers, underscore",
       });
     }
 
-    if (password.length < 4) {
+    if (password.length < 6) {
       return res.status(400).json({
-        message: "password must at least 4 characters",
+        message: "password must at least 6 characters",
+      });
+    }
+
+    if (!PASSWORD_RE.test(password)) {
+      return res.status(400).json({
+        message:
+          "password must include uppercase letter, lowercase letter, and number",
       });
     }
 
@@ -74,6 +82,13 @@ export async function login(req, res, next) {
         .json({ message: "username and password are required" });
     }
 
+    if (!USERNAME_RE.test(username)) {
+      return res.status(400).json({
+        message:
+          "username must be 3-20 characters and only letters, numbers, underscore",
+      });
+    }
+
     const user = await findAuthByUsername(username);
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
@@ -106,6 +121,7 @@ export async function getMe(req, res, next) {
     return res.status(200).json({
       id: user.id,
       username: user.username,
+      is_new: user.is_new,
     });
   } catch (err) {
     next(err);

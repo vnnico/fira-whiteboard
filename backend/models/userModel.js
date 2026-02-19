@@ -4,15 +4,16 @@ const userSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, unique: true, index: true },
     password: { type: String, required: true },
+    is_new: { type: Boolean, default: true },
   },
-  { timestamps: true, versionKey: false }
+  { timestamps: true, versionKey: false },
 );
 
 export const User = mongoose.model("User", userSchema);
 
 function mapPublicUser(doc) {
   if (!doc) return null;
-  return { id: String(doc._id), username: doc.username };
+  return { id: String(doc._id), username: doc.username, is_new: doc.is_new };
 }
 
 function mapAuthUser(doc) {
@@ -40,5 +41,24 @@ export async function findAuthByUsername(username) {
 
 export async function findById(id) {
   const doc = await User.findById(String(id || "")).lean();
+  console.log(doc);
   return mapPublicUser(doc);
+}
+
+export async function updateIsNew(id) {
+  const doc = await User.findByIdAndUpdate(
+    String(id),
+    { $set: { is_new: false } },
+    { new: true }, // return dokumen setelah update
+  ).lean();
+
+  if (!doc) return null;
+
+  console.log(doc);
+
+  return {
+    id: String(doc._id),
+    username: doc.username,
+    is_new: doc.is_new,
+  };
 }

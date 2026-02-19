@@ -1,6 +1,6 @@
 import { Board, Roles } from "../models/whiteboardModel.js";
 
-export const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.EDITOR;
+export const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.VIEWER;
 
 export function isOwner(board, userId) {
   const uid = String(userId || "");
@@ -30,7 +30,7 @@ export function isBoardMember(board, userId) {
 export async function ensureBoardExistsAndUpsertMember(
   roomId,
   userId,
-  opts = {}
+  opts = {},
 ) {
   const rid = String(roomId || "");
   const uid = String(userId || "");

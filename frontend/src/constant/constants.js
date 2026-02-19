@@ -1,5 +1,3 @@
-// whiteboard/constants.js
-
 export const ToolTypes = {
   POINTER: "POINTER",
   HAND: "HAND", // pan canvas (nanti)
@@ -49,6 +47,25 @@ export const SHORTCUTS = [
     ctrl: false,
     preventDefault: true,
   },
+  {
+    keys: ["p"],
+    action: "TOOL_PENCIL",
+    ctrl: false,
+    preventDefault: true,
+  },
+  {
+    keys: ["e"],
+    action: "TOOL_ERASER",
+    ctrl: false,
+    preventDefault: true,
+  },
+  {
+    keys: ["t"],
+    action: "TOOL_TEXT",
+    ctrl: false,
+    preventDefault: true,
+  },
+
   {
     keys: ["=", "+"],
     action: "ZOOM_IN",

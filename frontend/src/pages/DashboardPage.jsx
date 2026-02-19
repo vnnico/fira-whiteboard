@@ -6,6 +6,7 @@ import { useToast } from "../hooks/useToast";
 import {
   createWhiteboard,
   deleteWhiteboard,
+  removeWhiteboard,
   getWhiteboards,
   updateBoardTitle,
 } from "../services/whiteboardApi";
@@ -29,6 +30,7 @@ export default function DashboardPage() {
   const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteVerifyText, setDeleteVerifyText] = useState("");
 
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -98,14 +100,19 @@ export default function DashboardPage() {
       return;
     }
 
+    if (nextTitle.length > 30) {
+      showToast("Title should not surpass more than 30 characters", "error");
+      return;
+    }
+
     try {
       setRenaming(true);
       await updateBoardTitle(renameTarget.roomId, nextTitle);
 
       setMyBoards((prev) =>
         prev.map((b) =>
-          b.roomId === renameTarget.roomId ? { ...b, title: nextTitle } : b
-        )
+          b.roomId === renameTarget.roomId ? { ...b, title: nextTitle } : b,
+        ),
       );
 
       showToast("Whiteboard renamed", "success");
@@ -120,15 +127,46 @@ export default function DashboardPage() {
   const confirmDelete = async () => {
     if (!deleteTarget) return;
 
+    if (deleteVerifyText.trim() !== "DELETE") {
+      showToast('Please type "DELETE" to confirm', "error");
+      return;
+    }
+
     try {
       setDeleting(true);
       await deleteWhiteboard(deleteTarget.roomId);
 
       setMyBoards((prev) =>
-        prev.filter((b) => b.roomId !== deleteTarget.roomId)
+        prev.filter((b) => b.roomId !== deleteTarget.roomId),
       );
       showToast("Whiteboard deleted", "success");
       setDeleteTarget(null);
+      setDeleteVerifyText(null);
+    } catch (err) {
+      showToast("Failed to delete whiteboard", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const confirmRemove = async () => {
+    if (!deleteTarget) return;
+
+    if (deleteVerifyText.trim() !== "REMOVE") {
+      showToast('Please type "REMOVE" to confirm', "error");
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      await removeWhiteboard(deleteTarget.roomId);
+
+      setJoinedBoards((prev) =>
+        prev.filter((b) => b.roomId !== deleteTarget.roomId),
+      );
+      showToast("Whiteboard deleted", "success");
+      setDeleteTarget(null);
+      setDeleteVerifyText(null);
     } catch (err) {
       showToast("Failed to delete whiteboard", "error");
     } finally {
@@ -192,38 +230,99 @@ export default function DashboardPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-slate-900/30 backdrop-blur-[2px]"
-            onClick={() => !deleting && setDeleteTarget(null)}
+            onClick={() => {
+              if (deleting) return;
+              setDeleteTarget(null);
+              setDeleteVerifyText("");
+            }}
           />
           <div
             className="relative w-[92%] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-sm font-semibold text-slate-800">
-              Delete whiteboard
+              {activeSection === "my"
+                ? "Delete whiteboard"
+                : "Remove Whiteboard"}
             </div>
-            <div className="mt-2 text-sm text-slate-600">
-              This will permanently delete{" "}
-              <span className="font-semibold">{deleteTarget.title}</span>.
+            <div className="mt-2 space-y-2 text-sm text-slate-600">
+              <p>
+                This will permanently{" "}
+                {activeSection === "my" ? "delete" : "remove"}{" "}
+                <span className="font-semibold text-slate-800">
+                  {deleteTarget.title}
+                </span>
+                .
+              </p>
+
+              <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-red-700">
+                <div className="mt-1 text-sm">
+                  {activeSection === "my"
+                    ? "This whiteboard will be removed for everyone who has joined it and disappear from their “Joined Whiteboards” list and the link will no longer work."
+                    : "This whiteboard will be removed from your Joined Whiteboards list. You will lose access to it."}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <Input
+                value={deleteVerifyText}
+                onChange={(e) => setDeleteVerifyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    activeSection === "my" &&
+                    deleteVerifyText.trim() === "DELETE"
+                  ) {
+                    confirmDelete();
+                  } else if (
+                    e.key === "Enter" &&
+                    activeSection === "joined" &&
+                    deleteVerifyText.trim() === "REMOVE"
+                  ) {
+                    confirmRemove();
+                  }
+                }}
+                placeholder={
+                  activeSection === "my"
+                    ? "Type DELETE to confirm"
+                    : "Type REMOVE to confirm"
+                }
+                autoFocus
+              />
             </div>
 
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
                 className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
-                onClick={() => setDeleteTarget(null)}
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteVerifyText("");
+                }}
                 disabled={deleting}
               >
                 Cancel
               </button>
 
-              <button
-                type="button"
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
-                onClick={confirmDelete}
-                disabled={deleting}
-              >
-                {deleting ? "Deleting..." : "Delete"}
-              </button>
+              {activeSection === "my" ? (
+                <button
+                  type="button"
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+                  onClick={confirmDelete}
+                  disabled={deleting || deleteVerifyText.trim() !== "DELETE"}
+                >
+                  {deleting ? "Deleting..." : "Delete"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+                  onClick={confirmRemove}
+                  disabled={deleting || deleteVerifyText.trim() !== "REMOVE"}
+                >
+                  {deleting ? "Removing..." : "Remove"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -287,7 +386,7 @@ export default function DashboardPage() {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setOpenMenuRoomId((prev) =>
-                                  prev === board.roomId ? null : board.roomId
+                                  prev === board.roomId ? null : board.roomId,
                                 );
                               }}
                             >
@@ -319,6 +418,7 @@ export default function DashboardPage() {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setOpenMenuRoomId(null);
+                                    setDeleteVerifyText("");
                                     setDeleteTarget(board);
                                   }}
                                 >
@@ -365,7 +465,42 @@ export default function DashboardPage() {
                               {formatDateTime(board.createdAt)}
                             </div>
                           </div>
-                          <div className="text-slate-400">•••</div>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                              aria-label="Whiteboard actions"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMenuRoomId((prev) =>
+                                  prev === board.roomId ? null : board.roomId,
+                                );
+                              }}
+                            >
+                              <FiMoreHorizontal className="h-5 w-5" />
+                            </button>
+
+                            {openMenuRoomId === board.roomId ? (
+                              <div
+                                className="absolute right-0 top-8 z-20 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenMenuRoomId(null);
+                                    setDeleteVerifyText("");
+                                    setDeleteTarget(board);
+                                  }}
+                                >
+                                  <FiTrash2 className="h-4 w-4" />
+                                  Remove
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     ))}

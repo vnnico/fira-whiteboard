@@ -1,4 +1,3 @@
-// whiteboard/utils/getResizedCoordinates.js
 import { CursorPosition, ToolTypes } from "../constant/constants";
 
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
@@ -120,7 +119,6 @@ export function getResizedCoordinates({
         return {};
     }
 
-    // normalize new bounds (biar gak aneh kalau user “nyebrang”)
     const nnLeft = Math.min(nLeft, nRight);
     const nnRight = Math.max(nLeft, nRight);
     const nnTop = Math.min(nTop, nBottom);

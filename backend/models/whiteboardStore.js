@@ -8,7 +8,7 @@ const persistQueueByRoom = new Map();
 
 export const Roles = RoleEnum;
 
-const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.EDITOR;
+const DEFAULT_ROLE_FOR_NEW_MEMBER = Roles.VIEWER;
 
 function normalizeBoard(raw) {
   if (!raw) return null;
@@ -57,7 +57,7 @@ async function persistBoardNow(board) {
       $set: doc,
       $setOnInsert: { createdAt: board.createdAt },
     },
-    { upsert: true }
+    { upsert: true },
   );
 }
 

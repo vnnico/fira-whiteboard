@@ -267,20 +267,6 @@ function ParticipantCard({
       </div>
 
       <div className="flex gap-1">
-        {isOwner && !isSelf && (
-          <button
-            type="button"
-            aria-pressed={isEditor}
-            onClick={() =>
-              onSetRole?.(participant.id, isEditor ? "VIEWER" : "EDITOR")
-            }
-            title={isEditor ? "Set as viewer" : "Set as editor"}
-            className={controlButtonClass("surface", false)}
-          >
-            <FiEdit2 size={16} className={isEditor ? "text-emerald-600" : ""} />
-          </button>
-        )}
-
         {isSelf && (
           <>
             <button
@@ -331,6 +317,34 @@ function ParticipantCard({
               )}
             </button>
           </>
+        )}
+
+        {isOwner && !isSelf && (
+          <button
+            type="button"
+            aria-pressed={isEditor}
+            onClick={() =>
+              onSetRole?.(participant.id, isEditor ? "VIEWER" : "EDITOR")
+            }
+            title={isEditor ? "Set as viewer" : "Set as editor"}
+            className={controlButtonClass("surface", false)}
+          >
+            <FiEdit2 size={16} className={isEditor ? "text-emerald-600" : ""} />
+          </button>
+        )}
+
+        {isOwner && !isSelf && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirm(`Kick ${participant.name}?`)) return;
+              onKick?.(participant.id);
+            }}
+            title="Kick"
+            className={controlButtonClass("danger-ghost", false)}
+          >
+            <FiUserMinus size={16} />
+          </button>
         )}
 
         {/* OTHER PARTICIPANTS */}
@@ -435,20 +449,6 @@ function ParticipantCard({
               </div>
             )}
           </>
-        )}
-
-        {isOwner && !isSelf && (
-          <button
-            type="button"
-            onClick={() => {
-              if (!confirm(`Kick ${participant.name}?`)) return;
-              onKick?.(participant.id);
-            }}
-            title="Kick"
-            className={controlButtonClass("danger-ghost", false)}
-          >
-            <FiUserMinus size={16} />
-          </button>
         )}
       </div>
     </div>

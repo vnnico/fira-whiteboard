@@ -45,6 +45,7 @@ import { useNavigate } from "react-router-dom";
 
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
+import Input from "../../components/ui/Input";
 
 import {
   drawSelectionOverlay,
@@ -216,7 +217,7 @@ export default function WhiteboardCanvas({
   const [action, setAction] = useState(ActionTypes.NONE);
   const [selectedId, setSelectedId] = useState(null);
   const [selectedPosition, setSelectedPosition] = useState(
-    CursorPosition.OUTSIDE
+    CursorPosition.OUTSIDE,
   );
   const [textDraft, setTextDraft] = useState("");
   const [writingElementId, setWritingElementId] = useState(null);
@@ -224,9 +225,65 @@ export default function WhiteboardCanvas({
   const [isTimerOpen, setIsTimerOpen] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState("5");
   const timerRef = useRef(null);
+  const [isClearOpen, setIsClearOpen] = useState(false);
+  const [clearVerifyText, setClearVerifyText] = useState("");
+
+  const openClearModal = () => {
+    setIsClearOpen(true);
+    setClearVerifyText("");
+    setShapeMenuOpen(false);
+    setStyleOpen(false);
+  };
+
+  const closeClearModal = () => {
+    setIsClearOpen(false);
+    setClearVerifyText("");
+  };
+
+  const confirmClearBoard = () => {
+    if (wbBlocked) return;
+    if (!canUseClearBoard) return;
+
+    // close any text editing state
+    if (writingElementId) textAreaRef.current?.blur();
+    setWritingElementId(null);
+
+    deselect();
+    clearBoard(true);
+
+    closeClearModal();
+    showToast?.("Whiteboard cleared", "success");
+  };
 
   const timerRunning = !!timerState?.running;
   const canUseTimer = role === "OWNER";
+  const canUseClearBoard = role === "OWNER";
+  const isViewOnly = role === "VIEWER";
+  // Tools yang masih berguna untuk Viewer
+  const VIEW_ONLY_ALLOWED_TOOLS = new Set([ToolTypes.HAND]);
+
+  const viewerToastOnceRef = useRef(false);
+
+  // Helper: set tool dengan guard view-only
+  const setToolSafely = (nextTool) => {
+    if (isViewOnly && !VIEW_ONLY_ALLOWED_TOOLS.has(nextTool)) {
+      showToast?.(
+        "View-only mode: editing and selection tools are disabled. Ask the Owner to grant Editor access.",
+        "info",
+      );
+      // Pastikan viewer tetap berada di HAND agar bisa navigasi
+      setCurrentTool(ToolTypes.HAND);
+      setAction(ActionTypes.NONE);
+      setShapeMenuOpen(false);
+      setStyleOpen(false);
+      return;
+    }
+
+    setCurrentTool(nextTool);
+    setAction(ActionTypes.NONE);
+    setShapeMenuOpen(false);
+    setStyleOpen(false);
+  };
 
   const exportPng = useCallback(() => {
     // kalau sedang edit text, commit dulu agar hasil export final
@@ -295,6 +352,31 @@ export default function WhiteboardCanvas({
 
     showToast?.("Exported PNG", "success");
   }, [writingElementId, elements, myUserId, roomId, showToast]);
+
+  // Saat masuk view-only, paksa tool = HAND supaya UX konsisten
+  useEffect(() => {
+    if (!isViewOnly) return;
+
+    setShapeMenuOpen(false);
+    setStyleOpen(false);
+
+    if (currentTool !== ToolTypes.HAND) {
+      setCurrentTool(ToolTypes.HAND);
+      setAction(ActionTypes.NONE);
+    }
+  }, [isViewOnly, currentTool]);
+
+  useEffect(() => {
+    if (!role) return;
+    if (!isViewOnly) return;
+    if (viewerToastOnceRef.current) return;
+
+    viewerToastOnceRef.current = true;
+    showToast?.(
+      "You are in View-only mode. You can pan/zoom, but editing is disabled.",
+      "info",
+    );
+  }, [isViewOnly, showToast]);
 
   useEffect(() => {
     if (!isTimerOpen) return;
@@ -421,7 +503,7 @@ export default function WhiteboardCanvas({
       setElements,
       sendFinalElement,
       isLockedByOther,
-    ]
+    ],
   );
 
   const releaseMySelectedLock = useCallback(() => {
@@ -440,7 +522,7 @@ export default function WhiteboardCanvas({
   // Coordinates Helper
   // Get relative position. Bridge between world coordinates and screen coordinates.
   const getRelativePos = (e) => {
-    // Screen coordinates (affected by zoom/pan from transformRef)
+    // Screen coordinates
     const rect = canvasRef.current.getBoundingClientRect();
 
     let currentScale = transformRef.current?.instance.transformState.scale || 1;
@@ -565,7 +647,7 @@ export default function WhiteboardCanvas({
 
       return newEl;
     },
-    [deepCloneElement, genSeed]
+    [deepCloneElement, genSeed],
   );
 
   // Copy element
@@ -683,7 +765,7 @@ export default function WhiteboardCanvas({
     };
 
     setElements((prev) =>
-      prev.map((e) => (e?.id === selectedId ? deleted : e))
+      prev.map((e) => (e?.id === selectedId ? deleted : e)),
     );
 
     // persist + broadcast ke semua user
@@ -815,7 +897,7 @@ export default function WhiteboardCanvas({
     };
 
     setElements((prev) =>
-      prev.map((el) => (el?.id === id ? finalElement : el))
+      prev.map((el) => (el?.id === id ? finalElement : el)),
     );
     sendFinalElement(finalElement);
     if (locks && locks[id] === myUserId) unlockElement(id);
@@ -1290,7 +1372,7 @@ export default function WhiteboardCanvas({
               setAction(
                 hitPos === CursorPosition.INSIDE || !canResize
                   ? ActionTypes.MOVING
-                  : ActionTypes.RESIZING
+                  : ActionTypes.RESIZING,
               );
             }
 
@@ -1369,7 +1451,7 @@ export default function WhiteboardCanvas({
     if (!canvas) return;
 
     if (action === ActionTypes.ERASING) {
-      // selama drag eraser: hapus pencil stroke yang kena
+      // selama drag eraser, hapus pencil stroke yang kena
       eraseAtPoint(x, y);
       return;
     }
@@ -1437,7 +1519,7 @@ export default function WhiteboardCanvas({
               return { ...el, points: [...(el.points || []), { x, y }] };
             }
             return { ...el, x2: x, y2: y };
-          }
+          },
         );
 
         if (updatedElement) sendDraftElement(updatedElement);
@@ -1482,7 +1564,7 @@ export default function WhiteboardCanvas({
               x2: interactionRef.current.originalElement.x2 + dx,
               y2: interactionRef.current.originalElement.y2 + dy,
             };
-          }
+          },
         );
 
         if (updatedElement) sendDraftElement(updatedElement);
@@ -1559,7 +1641,7 @@ export default function WhiteboardCanvas({
               const scale = Math.min(nW / oW, nH / oH);
               const newFontSize = Math.max(
                 8,
-                Math.min(200, Math.round(of * scale))
+                Math.min(200, Math.round(of * scale)),
               );
               const newLineHeight = Math.round(newFontSize * 1.25);
 
@@ -1567,7 +1649,7 @@ export default function WhiteboardCanvas({
               const { width, height } = measureTextBlock(
                 orig.text ?? el.text ?? "",
                 newFontSize,
-                newLineHeight
+                newLineHeight,
               );
 
               // set x1,y1,x2,y2 berdasarkan anchor
@@ -1681,7 +1763,7 @@ export default function WhiteboardCanvas({
             });
 
             return { ...el, ...coords };
-          }
+          },
         );
 
         if (updatedElement) sendDraftElement(updatedElement);
@@ -1758,6 +1840,41 @@ export default function WhiteboardCanvas({
   const handleShortcutAction = useCallback(
     (act) => {
       if (wbBlocked) return;
+
+      // Viewer: allow navigation-only shortcuts
+      if (isViewOnly) {
+        switch (act) {
+          case "ZOOM_IN":
+            transformRef.current?.zoomIn();
+            return;
+          case "ZOOM_OUT":
+            transformRef.current?.zoomOut();
+            return;
+          case "TOOL_HAND":
+            setToolSafely(ToolTypes.HAND);
+            return;
+
+          // Pointer / Pencil / Text / Delete / Copy / Paste / Duplicate: blocked with educational toast
+          case "TOOL_POINTER":
+          case "TOOL_PENCIL":
+          case "TOOL_ERASER":
+          case "TOOL_TEXT":
+          case "COPY":
+          case "PASTE":
+          case "DUPLICATE":
+          case "DELETE_SELECTED":
+            showToast?.(
+              "View-only mode: editing and selection actions are disabled.",
+              "info",
+            );
+            return;
+
+          default:
+            return;
+        }
+      }
+
+      // Editor/Owner normal behavior
       switch (act) {
         case "COPY":
           copySelected();
@@ -1773,32 +1890,52 @@ export default function WhiteboardCanvas({
           deleteSelected();
           break;
 
+        case "TOOL_PENCIL":
+          if (editDisabled) return;
+          setToolSafely(ToolTypes.PENCIL);
+          break;
+        case "TOOL_ERASER":
+          if (editDisabled) return;
+          setToolSafely(ToolTypes.ERASER);
+          break;
+
+        case "TOOL_TEXT":
+          if (editDisabled) return;
+          setToolSafely(ToolTypes.TEXT);
+          break;
+
         case "ZOOM_IN":
           transformRef.current?.zoomIn();
           break;
         case "ZOOM_OUT":
           transformRef.current?.zoomOut();
           break;
+
         case "TOOL_POINTER":
-          setCurrentTool(ToolTypes.POINTER);
-          setAction(ActionTypes.NONE);
+          setToolSafely(ToolTypes.POINTER);
           break;
+
         case "TOOL_HAND":
-          setCurrentTool(ToolTypes.HAND);
-          setAction(ActionTypes.NONE);
+          setToolSafely(ToolTypes.HAND);
           break;
+
         default:
           break;
       }
     },
     [
       wbBlocked,
+      isViewOnly,
+      editDisabled,
       copySelected,
       pasteFromClipboard,
       duplicateSelected,
       deleteSelected,
-    ]
+      setToolSafely,
+      showToast,
+    ],
   );
+
   useKeyboardShortcuts(handleShortcutAction);
 
   return (
@@ -1849,6 +1986,77 @@ export default function WhiteboardCanvas({
           View only • {role}
         </div>
       )}
+
+      {/* Clear Confirm Modal (type CLEAR) */}
+      {isClearOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-slate-900/30 backdrop-blur-[2px]"
+            onClick={() => {
+              // kalau sedang blocked/reconnect, tetap boleh ditutup
+              closeClearModal();
+            }}
+          />
+          <div
+            className="relative w-[92%] max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold text-slate-800">
+              Clear whiteboard
+            </div>
+
+            <div className="mt-2 space-y-2 text-sm text-slate-600">
+              <p>
+                This will remove all elements permanently from the whiteboard
+                for everyone.
+              </p>
+
+              <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-red-700">
+                <div className="text-sm">
+                  This action is destructive and cannot be undone.
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <Input
+                value={clearVerifyText}
+                onChange={(e) => setClearVerifyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && clearVerifyText.trim() === "CLEAR") {
+                    confirmClearBoard();
+                  }
+                }}
+                placeholder="Type CLEAR to confirm"
+                autoFocus
+              />
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+                onClick={closeClearModal}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-60"
+                onClick={confirmClearBoard}
+                disabled={
+                  wbBlocked ||
+                  clearVerifyText.trim() !== "CLEAR" ||
+                  !canUseClearBoard
+                }
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <TransformWrapper
         ref={transformRef}
@@ -2019,7 +2227,7 @@ export default function WhiteboardCanvas({
 
                     if (original?.id === id) {
                       setElements((prev) =>
-                        prev.map((el) => (el?.id === id ? original : el))
+                        prev.map((el) => (el?.id === id ? original : el)),
                       );
                     } else {
                       setElements((prev) => prev.filter((el) => el?.id !== id));
@@ -2081,13 +2289,13 @@ export default function WhiteboardCanvas({
           </div>
         </TransformComponent>
       </TransformWrapper>
-
+      {/* 
       <button
         onClick={() => setCollapsed((prev) => !prev)}
         className="absolute left-1 top-1/2 z-20 -translate-y-1/2 rounded-full bg-slate-900 px-[5px] py-[3px] text-xs text-slate-50 shadow"
       >
         {collapsed ? <FiChevronRight /> : <FiChevronLeft />}
-      </button>
+      </button> */}
 
       <div
         className={`absolute left-4 top-1/2 z-10 -translate-y-1/2 transition-all duration-200 ${
@@ -2165,19 +2373,28 @@ export default function WhiteboardCanvas({
             </div>
           )}
 
+          {/* Stroke options (disabled on view-only to avoid false affordance) */}
           <div className="relative">
             <button
-              disabled={editDisabled}
+              disabled={editDisabled || isViewOnly}
               onClick={() => {
+                if (editDisabled || isViewOnly) {
+                  showToast?.(
+                    "View-only mode: style options are disabled.",
+                    "info",
+                  );
+                  return;
+                }
                 setStyleOpen((prev) => !prev);
                 setShapeMenuOpen(false);
               }}
               className={`flex h-11 w-11 items-center justify-center rounded-xl shadow ${
-                editDisabled
-                  ? "bg-slate-200 text-slate-400"
+                editDisabled || isViewOnly
+                  ? "bg-slate-200 text-slate-400 cursor-not-allowed"
                   : "bg-slate-200 text-slate-700 hover:bg-slate-100"
               }`}
-              title="Stroke options"
+              title={isViewOnly ? "View-only" : "Stroke options"}
+              type="button"
             >
               <div
                 className="h-5 w-5 rounded-full ring-2 ring-white"
@@ -2185,7 +2402,7 @@ export default function WhiteboardCanvas({
               />
             </button>
 
-            {styleOpen && (
+            {styleOpen && !isViewOnly && (
               <div
                 className="absolute left-12 top-0 z-30 w-44 rounded-xl bg-white p-2 shadow-lg ring-1 ring-slate-900/10"
                 onMouseLeave={() => setStyleOpen(false)}
@@ -2248,7 +2465,7 @@ export default function WhiteboardCanvas({
                   <button
                     type="button"
                     onClick={() => {
-                      setFillColor(""); // apply hanya kalau selected element memang shape fillable
+                      setFillColor("");
                       const sel = elements.find((e) => e?.id === selectedId);
                       if (sel && isFillableType(sel.type)) {
                         applyStyleToSelected({ fill: "" });
@@ -2293,63 +2510,71 @@ export default function WhiteboardCanvas({
             )}
           </div>
 
+          {/* Main Tools */}
           <div className="flex flex-col gap-2 rounded-2xl bg-slate-200 px-1 py-2 shadow">
+            {/* Pointer stays visible but disabled on view-only (avoid “only hand” look) */}
             <ToolButton
-              active={currentTool === ToolTypes.POINTER}
+              active={currentTool === ToolTypes.POINTER && !isViewOnly}
+              disabled={isViewOnly}
+              title={
+                isViewOnly ? "View-only: selection is disabled" : "Pointer (V)"
+              }
               onClick={() => {
                 if (writingElementId) textAreaRef.current?.blur();
-                setCurrentTool(ToolTypes.POINTER);
-                setAction(ActionTypes.NONE);
-                setShapeMenuOpen(false);
-                setStyleOpen(false);
+                setToolSafely(ToolTypes.POINTER);
               }}
             >
               ▲
             </ToolButton>
 
+            {/* Hand is always allowed (Viewer-friendly) */}
             <ToolButton
               active={currentTool === ToolTypes.HAND}
+              disabled={false}
+              title="Hand (H)"
               onClick={() => {
-                setCurrentTool(ToolTypes.HAND);
-                setAction(ActionTypes.NONE);
-                setShapeMenuOpen(false);
-                setStyleOpen(false);
+                setToolSafely(ToolTypes.HAND);
               }}
             >
-              <LuHand></LuHand>
+              <LuHand />
             </ToolButton>
 
+            {/* Editing tools remain visible but disabled on view-only */}
             <ToolButton
               active={currentTool === ToolTypes.PENCIL}
+              disabled={editDisabled || isViewOnly}
+              title={isViewOnly ? "View-only" : "Pencil (P)"}
               onClick={() => {
                 if (editDisabled) return;
-
-                setCurrentTool(ToolTypes.PENCIL);
-                setShapeMenuOpen(false);
-                setStyleOpen(false);
+                setToolSafely(ToolTypes.PENCIL);
               }}
             >
-              <LuPencil></LuPencil>
+              <LuPencil />
             </ToolButton>
+
             <ToolButton
               active={currentTool === ToolTypes.ERASER}
+              disabled={editDisabled || isViewOnly}
+              title={isViewOnly ? "View-only" : "Eraser"}
               onClick={() => {
                 if (editDisabled) return;
                 if (writingElementId) textAreaRef.current?.blur();
-                setCurrentTool(ToolTypes.ERASER);
-                setAction(ActionTypes.NONE);
-                setShapeMenuOpen(false);
-                setStyleOpen(false);
+                setToolSafely(ToolTypes.ERASER);
               }}
             >
-              <LuEraser></LuEraser>
+              <LuEraser />
             </ToolButton>
 
             <div className="relative">
               <ToolButton
                 active={isShapeTool(currentTool)}
+                disabled={editDisabled || isViewOnly}
+                title={isViewOnly ? "View-only" : "Shapes"}
                 onClick={() => {
-                  if (editDisabled) return;
+                  if (editDisabled || isViewOnly) {
+                    showToast?.("View-only mode: shapes are disabled.", "info");
+                    return;
+                  }
                   setShapeMenuOpen((prev) => !prev);
                   setStyleOpen(false);
                 }}
@@ -2357,99 +2582,83 @@ export default function WhiteboardCanvas({
                 {getShapeIcon(currentTool)}
               </ToolButton>
 
-              {shapeMenuOpen && (
+              {shapeMenuOpen && !isViewOnly && (
                 <div
                   className="absolute left-12 top-0 z-30 w-40 rounded-xl bg-white p-2 shadow-lg ring-1 ring-slate-900/10"
                   onMouseLeave={() => setShapeMenuOpen(false)}
                 >
                   <button
                     className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
-                    onClick={() => {
-                      setCurrentTool(ToolTypes.RECTANGLE);
-                      setShapeMenuOpen(false);
-                      setShapeMenuOpen(false);
-                      setStyleOpen(false);
-                    }}
+                    onClick={() => setToolSafely(ToolTypes.RECTANGLE)}
                   >
-                    <LuSquare className="my-auto"></LuSquare>
+                    <LuSquare className="my-auto" />
                     <p>Rectangle</p>
                   </button>
 
                   <button
                     className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
-                    onClick={() => {
-                      setCurrentTool(ToolTypes.CIRCLE);
-                      setShapeMenuOpen(false);
-                      setShapeMenuOpen(false);
-                      setStyleOpen(false);
-                    }}
+                    onClick={() => setToolSafely(ToolTypes.CIRCLE)}
                   >
-                    <LuCircle className="my-auto"></LuCircle>
+                    <LuCircle className="my-auto" />
                     <p>Circle</p>
                   </button>
 
                   <button
                     className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
-                    onClick={() => {
-                      setCurrentTool(ToolTypes.TRIANGLE);
-                      setShapeMenuOpen(false);
-                      setShapeMenuOpen(false);
-                      setStyleOpen(false);
-                    }}
+                    onClick={() => setToolSafely(ToolTypes.TRIANGLE)}
                   >
-                    <LuTriangle className="my-auto"></LuTriangle>
+                    <LuTriangle className="my-auto" />
                     <p>Triangle</p>
                   </button>
 
                   <button
                     className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 flex gap-2"
-                    onClick={() => {
-                      setCurrentTool(ToolTypes.LINE);
-                      setShapeMenuOpen(false);
-                      setShapeMenuOpen(false);
-                      setStyleOpen(false);
-                    }}
+                    onClick={() => setToolSafely(ToolTypes.LINE)}
                   >
-                    <LuSlash className="my-auto"></LuSlash>
+                    <LuSlash className="my-auto" />
                     <p>Line</p>
                   </button>
                 </div>
               )}
             </div>
 
-            <ToolButton
-              active={false}
-              onClick={() => {
-                if (editDisabled) return;
-
-                if (writingElementId) textAreaRef.current?.blur();
-                if (selectedId) {
-                  deleteSelected();
-                  return;
+            {/* Clear/Delete is Owner-only already; also disable on view-only */}
+            {canUseClearBoard && (
+              <ToolButton
+                active={false}
+                disabled={editDisabled || isViewOnly}
+                title={
+                  isViewOnly ? "View-only" : "Delete selected / Clear board"
                 }
+                onClick={() => {
+                  if (selectedId) {
+                    deleteSelected();
+                    return;
+                  }
 
-                if (confirm("Are you sure to clear whiteboad?")) {
-                  if (wbBlocked) return;
-                  setWritingElementId(null);
-                  deselect();
-                  clearBoard(true);
-                  setShapeMenuOpen(false);
-                  setStyleOpen(false);
-                }
-              }}
-            >
-              ⌫
-            </ToolButton>
+                  if (writingElementId) textAreaRef.current?.blur();
+                  if (selectedId) {
+                    deleteSelected();
+                    return;
+                  }
+
+                  openClearModal();
+                }}
+              >
+                ⌫
+              </ToolButton>
+            )}
 
             <ToolButton
               active={currentTool === ToolTypes.TEXT}
+              disabled={editDisabled || isViewOnly}
+              title={isViewOnly ? "View-only" : "Text (T)"}
               onClick={() => {
-                setCurrentTool(ToolTypes.TEXT);
-                setShapeMenuOpen(false);
-                setStyleOpen(false);
+                if (editDisabled) return;
+                setToolSafely(ToolTypes.TEXT);
               }}
             >
-              <LuText></LuText>
+              <LuText />
             </ToolButton>
           </div>
 
@@ -2488,20 +2697,25 @@ export default function WhiteboardCanvas({
   );
 }
 
-function ToolButton({ active, onClick, children }) {
+function ToolButton({ active, disabled = false, onClick, children, title }) {
   return (
     <button
       type="button"
+      title={title}
+      disabled={disabled}
       onClick={(e) => {
-        onClick();
+        if (disabled) return;
+        onClick?.();
         e.currentTarget.blur();
       }}
       className={`flex h-10 w-10 items-center justify-center rounded-xl text-sm transition-all duration-150
         outline-none focus:outline-none focus:ring-0
         ${
-          active
-            ? "bg-slate-900 text-slate-50 shadow-md transform scale-105"
-            : "bg-slate-100 text-slate-700 hover:bg-white hover:shadow-sm"
+          disabled
+            ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+            : active
+              ? "bg-slate-900 text-slate-50 shadow-md transform scale-105"
+              : "bg-slate-100 text-slate-700 hover:bg-white hover:shadow-sm"
         }`}
     >
       {children}

@@ -7,6 +7,7 @@ import {
   updateTitle,
   checkWhiteboardExists,
   deleteWhiteboard,
+  removeWhiteboard,
 } from "../controllers/whiteboardController.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 
@@ -20,5 +21,6 @@ router.get("/:roomId/meta", requireAuth, getWhiteboardMeta);
 // update title
 router.patch("/:roomId/title", requireAuth, updateTitle);
 router.delete("/:roomId", requireAuth, deleteWhiteboard);
+router.delete("/joined/:roomId", requireAuth, removeWhiteboard);
 
 export default router;

@@ -8,6 +8,7 @@ import { useToast } from "../hooks/useToast";
 import { FiEye, FiEyeOff } from "react-icons/fi";
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/;
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -43,12 +44,23 @@ export default function RegisterPage() {
     }
 
     if (!USERNAME_RE.test(username)) {
-      showToast("Username: 3-20 chars, only letters/numbers/_", "error");
+      showToast(
+        "Username must be 3-20 characters and only letters, numbers, underscore",
+        "error",
+      );
       return;
     }
 
-    if (password.length < 4) {
-      showToast("Password minimal 4 karakter", "error");
+    if (password.length < 6) {
+      showToast("Password must at least 6 characters", "error");
+      return;
+    }
+
+    if (!PASSWORD_RE.test(password)) {
+      showToast(
+        "Password must include uppercase letter, lowercase letter, and number",
+        "error",
+      );
       return;
     }
 
